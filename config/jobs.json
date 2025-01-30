@@ -1,0 +1,20 @@
+[
+  {
+    "bytes": "1GB",
+    "files_count": 1,
+    "id": 1,
+    "deadline": ""
+  },
+  {
+    "bytes": "100GB",
+    "files_count": 100,
+    "id": 3,
+    "deadline": ""
+  },
+  {
+    "bytes": "10TB",
+    "files_count": 100,
+    "id": 2,
+    "deadline": ""
+  }
+]

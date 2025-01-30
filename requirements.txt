@@ -1,0 +1,8 @@
+numpy~=2.0.2
+requests~=2.32.3
+click
+rich
+pandas
+matplotlib
+seaborn
+pytest
