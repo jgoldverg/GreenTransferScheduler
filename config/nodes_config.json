@@ -1,26 +1,6 @@
 [
   {
-    "name": "jgoldverg@gmail.com-macmini",
-    "total_ram": 16,
-    "NIC_SPEED": "1Gbps",
-    "CPU": 8,
-    "power": {
-      "min": 6.8,
-      "max": 39
-    }
-  },
-  {
-    "name": "jgoldverg@gmail.com-rpi4",
-    "total_ram": 8,
-    "NIC_SPEED": "1Gbps",
-    "CPU": 4,
-    "power": {
-      "min": 2.7,
-      "max": 5.4
-    }
-  },
-  {
-    "name": "jgoldverg@gmail.com-ccuc",
+    "name": "jgoldverg@gmail.com_ccuc",
     "total_ram": 128,
     "NIC_SPEED": "10Gbps",
     "CPU": 64,
@@ -30,13 +10,13 @@
     }
   },
   {
-    "name": "jgoldverg@gmail.com-fabric",
-    "total_ram": 128,
-    "NIC_SPEED": "100Gbps",
-    "CPU": 64,
+    "name": "jgoldverg@gmail.com_system76",
+    "total_ram": 32,
+    "NIC_SPEED": "1Gbps",
+    "CPU": 32,
     "power": {
-      "min": 8.5,
-      "max": 31
+      "min": 40,
+      "max": 350
     }
   }
 ]

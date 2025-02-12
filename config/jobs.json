@@ -1,18 +1,18 @@
 [
   {
-    "bytes": "1GB",
+    "bytes": "1000000000",
     "files_count": 1,
     "id": 1,
     "deadline": ""
   },
   {
-    "bytes": "100GB",
+    "bytes": "100000000000",
     "files_count": 100,
     "id": 3,
     "deadline": ""
   },
   {
-    "bytes": "10TB",
+    "bytes": "10000000000000",
     "files_count": 100,
     "id": 2,
     "deadline": ""

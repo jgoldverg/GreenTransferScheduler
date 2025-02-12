@@ -6,10 +6,10 @@ import click
 import requests
 
 
-def convert_to_bits(size):
-    units = {"KB": 10 ** 3, "MB": 10 ** 6, "GB": 10 ** 9, "TB": 10 ** 12}
-    size, unit = size[:-2], size[-2:].upper()
-    return int(size) * units[unit] * 8  # Convert to bits
+# def convert_to_bits(size):
+#     units = {"KB": 10 ** 3, "MB": 10 ** 6, "GB": 10 ** 9, "TB": 10 ** 12}
+#     size, unit = size[:-2], size[-2:].upper()
+#     return int(size) * units[unit] * 8  # Convert to bits
 
 
 # Utility to convert NIC speed to bps
@@ -20,33 +20,35 @@ def parse_speed_to_bps(speed_str):
         raise ValueError("Invalid speed format. Must end with 'bps', e.g., '1Gbps'.")
 
     value = float(speed_str[:-4])  # Get the numeric part (strip last 4 chars: 'BPS')
-    unit = speed_str[-4:]         # Extract the unit (bps)
+    unit = speed_str[-4:]  # Extract the unit (bps)
 
     # Convert based on unit prefix
     if "G" in speed_str:
         return int(value * 1_000_000_000)  # Gbps to bps
     elif "M" in speed_str:
-        return int(value * 1_000_000)      # Mbps to bps
+        return int(value * 1_000_000)  # Mbps to bps
     elif "K" in speed_str:
-        return int(value * 1_000)          # Kbps to bps
+        return int(value * 1_000)  # Kbps to bps
     elif "BPS" in speed_str:
-        return int(value)                  # Already in bps
+        return int(value)  # Already in bps
     else:
         raise ValueError("Unsupported unit in speed string.")
 
 
-
 # Key class for all forecasts related to this IP: Lat and Lon pair
 class IpToLonAndLat:
-    def __init__(self, ip, lon, lat):
+    def __init__(self, ip, lon, lat, rtt, ttl):
         self.ip = ip
         self.lon = lon
         self.lat = lat
+        self.rtt = rtt
+        self.ttl = ttl
 
     def __eq__(self, other):
         # Define equality based on the attributes of the object
         if isinstance(other, IpToLonAndLat):
-            return (self.ip, self.lon, self.lat) == (other.ip, other.lon, other.lat)
+            return (self.ip, self.lon, self.lat, self.rtt, self.ttl) == (
+                other.ip, other.lon, other.lat, other.rtt, other.ttl)
         return False
 
     def __hash__(self):
@@ -61,7 +63,9 @@ class IpToLonAndLat:
         return {
             'ip': self.ip,
             'lon': self.lon,
-            'lat': self.lat
+            'lat': self.lat,
+            'rtt': self.rtt,
+            'ttl': self.ttl
         }
 
 
@@ -105,7 +109,6 @@ class IpOrderAndForecastData:
             })
         return results
 
-
     def create_and_populate_forecast(self, forecasts_file_path):
         list_json_forecast = self.fetch_forecast_for_ip(self.ipCoordinate)
 
@@ -142,21 +145,30 @@ class IpOrderAndForecastData:
 
 def read_in_ip_map(ip_path) -> List[List[IpToLonAndLat]]:
     list_of_ip_objects = []
-    with open(ip_path, 'r') as f:
-        for line in f:
-            try:
-                pmeter_data = json.loads(line.strip())
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON: {e}")
-                continue
+    print(f"Loading traceroute from path: {ip_path}")
 
-            # Convert each IP entry to an IpToLonAndLat object
-            ip_objects = [
-                IpToLonAndLat(ip=key, lon=value['lon'], lat=value['lat'])
-                for key, value in pmeter_data.items()
-                if key != "time"  # Exclude the "time" key
-            ]
-            list_of_ip_objects.append(ip_objects)
+    with open(ip_path, 'r') as f:
+        try:
+            pmeter_data = json.load(f)  # Load the entire file at once
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON: {e}")
+            return []
+
+    # Convert each IP entry to an IpToLonAndLat object
+    ip_obj_list = []
+    for key, value in pmeter_data.items():
+        if key in ['time', 'node_id', 'job_id']:
+            continue  # Skip metadata keys
+        ip_obj = IpToLonAndLat(
+            ip=key,
+            lon=value['lon'],
+            lat=value['lat'],
+            rtt=value['rtt'],
+            ttl=value['ttl']
+        )
+        ip_obj_list.append(ip_obj)
+
+    list_of_ip_objects.append(ip_obj_list)
     return list_of_ip_objects
 
 

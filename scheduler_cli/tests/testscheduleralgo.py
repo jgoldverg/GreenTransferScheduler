@@ -1,6 +1,6 @@
 import pytest
 from click.testing import CliRunner
-from scheduler.scheduler_algo import SchedulerAlgo
+from scheduler_cli.scheduler_algo import SchedulerAlgo
 
 
 class TestSchedulerAlgo:

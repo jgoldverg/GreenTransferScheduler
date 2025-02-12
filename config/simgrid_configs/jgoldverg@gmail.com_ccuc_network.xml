@@ -1,0 +1,93 @@
+<?xml version="1.0"?>
+<!DOCTYPE platform SYSTEM "https://simgrid.org/simgrid.dtd">
+<platform version="4.1">
+    <zone id="AS0" routing="Full">
+        <host id="jgoldverg@gmail.com_ccuc" speed="1Gf" core="64">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <host id="host1" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link1" bandwidth="10GBps" latency="0.01557612419128418ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host2" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link2" bandwidth="10GBps" latency="0.014902114868164062ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host3" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link3" bandwidth="10GBps" latency="0.015527725219726562ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host4" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link4" bandwidth="10GBps" latency="0.02968907356262207ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host5" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link5" bandwidth="10GBps" latency="0.029158830642700195ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host6" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link6" bandwidth="10GBps" latency="0.030752182006835938ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host7" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link7" bandwidth="10GBps" latency="0.050057172775268555ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host8" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link8" bandwidth="10GBps" latency="0.049494028091430664ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <host id="host9" speed="1Gf" core="4">
+            <prop id="wattage_per_state" value="100.0:120.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </host>
+        <link id="link9" bandwidth="10GBps" latency="0.09335780143737793ms" sharing_policy="SHARED">
+            <prop id="wattage_range" value="100.0:200.0"/>
+            <prop id="wattage_off" value="10"/>
+        </link>
+        <route src="jgoldverg@gmail.com_ccuc" dst="host9">
+            <link_ctn id="link1"/>
+            <link_ctn id="link2"/>
+            <link_ctn id="link3"/>
+            <link_ctn id="link4"/>
+            <link_ctn id="link5"/>
+            <link_ctn id="link6"/>
+            <link_ctn id="link7"/>
+            <link_ctn id="link8"/>
+            <link_ctn id="link9"/>
+        </route>
+    </zone>
+</platform>

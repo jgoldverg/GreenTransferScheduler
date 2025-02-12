@@ -1,5 +1,5 @@
 import pytest
-from scheduler.models import IpOrderAndForecastData, IpToLonAndLat
+from scheduler_cli.models import IpOrderAndForecastData, IpToLonAndLat
 
 
 class TestIpOrderAndForecastData:
