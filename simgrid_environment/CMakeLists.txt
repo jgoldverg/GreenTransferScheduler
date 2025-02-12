@@ -9,8 +9,11 @@ set(SIMGRID_ROOT "/opt/homebrew/opt/simgrid") # Change to /usr/local for Intel M
 include_directories("${SIMGRID_ROOT}/include")
 link_directories("${SIMGRID_ROOT}/lib")
 
+# Find and link nlohmann_json
+find_package(nlohmann_json REQUIRED)
+
 # Create executable
 add_executable(my_simgrid_app main.cpp)
 
-# Link SimGrid manually
-target_link_libraries(my_simgrid_app simgrid)
+# Link SimGrid and nlohmann_json
+target_link_libraries(my_simgrid_app PRIVATE simgrid nlohmann_json::nlohmann_json)

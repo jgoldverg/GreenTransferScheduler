@@ -9,7 +9,12 @@
 #include <simgrid/s4u.hpp>
 #include <vector>
 #include <string>
+#include <chrono>
+#include <fstream>
+#include <nlohmann/json.hpp>
 
+
+using json = nlohmann::json;
 /* Parameters of the random generation of the flow size */
 static const int min_size = 1e6;
 static const int max_size = 1e9;
@@ -18,67 +23,79 @@ XBT_LOG_NEW_DEFAULT_CATEGORY(s4u_app_energyconsumption, "Messages specific for t
 namespace sg4 = simgrid::s4u;
 
 static void sender(std::vector<std::string> args) {
-    xbt_assert(args.size() == 2, "The master function expects 2 arguments.");
-    int flow_amount = std::stoi(args.at(0));
-    long comm_size = std::stol(args.at(1));
-    XBT_INFO("Send %ld bytes, in %d flows", comm_size, flow_amount);
+    xbt_assert(args.size() == 2, "The sender function expects 2 arguments.");
+    int flow_amount = std::stoi(args.at(0));  // Number of flows
+    long comm_size = std::stol(args.at(1));   // Total data size
 
+    XBT_INFO("Sending %ld bytes in %d flows", comm_size, flow_amount);
     sg4::Mailbox *mailbox = sg4::Mailbox::by_name("message");
 
-    /* Sleep a while before starting the example */
+    // Sleep before starting the transfer
     sg4::this_actor::sleep_for(10);
 
-    if (flow_amount == 1) {
-        /* - Send the task to the @ref worker */
-        char *payload = bprintf("%ld", comm_size);
-        mailbox->put(payload, comm_size);
-    } else {
-        // Start all comms in parallel, and wait for all completions in one shot
-        sg4::ActivitySet comms;
-        for (int i = 0; i < flow_amount; i++)
-            comms.push(mailbox->put_async(bprintf("%d", i), comm_size));
-        comms.wait_all();
+    long chunk_size = comm_size / flow_amount;
+    long remainder = comm_size % flow_amount;
+
+    sg4::ActivitySet comms;  // Activity set to track parallel transfers
+
+    for (int i = 0; i < flow_amount; i++) {
+        long this_chunk_size = (i == flow_amount - 1) ? chunk_size + remainder : chunk_size;
+        XBT_INFO("Flow %d sending %ld bytes", i, this_chunk_size);
+
+        // Asynchronous put to enable parallel flow transfers
+        comms.push(mailbox->put_async(bprintf("%d", i), this_chunk_size));
     }
-    XBT_INFO("sender done.");
+
+    comms.wait_all();  // Wait for all chunks to be transferred
+    XBT_INFO("Sender finished sending all flows.");
 }
+
+
 
 static void receiver(std::vector<std::string> args) {
+    xbt_assert(args.size() == 1, "The receiver function expects 1 argument.");
     int flow_amount = std::stoi(args.at(0));
 
-    XBT_INFO("Receiving %d flows ...", flow_amount);
-
+    XBT_INFO("Receiving %d flows...", flow_amount);
     sg4::Mailbox *mailbox = sg4::Mailbox::by_name("message");
 
-    if (flow_amount == 1) {
-        char *res = mailbox->get<char>();
-        xbt_free(res);
-    } else {
-        std::vector<char *> data(flow_amount);
+    std::vector<char *> data(flow_amount);
+    sg4::ActivitySet comms;
 
-        // Start all comms in parallel, and wait for their completion in one shot
-        sg4::ActivitySet comms;
-        for (int i = 0; i < flow_amount; i++)
-            comms.push(mailbox->get_async<char>(&data[i]));
-
-        comms.wait_all();
-        for (int i = 0; i < flow_amount; i++)
-            xbt_free(data[i]);
+    for (int i = 0; i < flow_amount; i++) {
+        comms.push(mailbox->get_async<char>(&data[i]));  // Async receive
     }
-    XBT_INFO("receiver done.");
+
+    comms.wait_all();  // Ensure all flows are received
+
+    for (int i = 0; i < flow_amount; i++) {
+        XBT_INFO("Flow %d received %ld bytes", i, sizeof(data[i]));
+        xbt_free(data[i]);  // Free allocated memory
+    }
+
+    XBT_INFO("Receiver finished receiving all flows.");
 }
+
+
 
 int main(int argc, char *argv[]) {
     sg4::Engine e(&argc, argv);
 
     XBT_INFO("Activating the SimGrid link energy plugin");
     sg_link_energy_plugin_init();
-    // sg_host_energy_plugin_init();
+    sg_host_energy_plugin_init();
 
     xbt_assert(argc > 1, "\nUsage: %s platform_file [flowCount [datasize]]\n"
                "\tExample: %s s4uplatform.xml \n",
                argv[0], argv[0]);
     e.load_platform(argv[1]);
+    std::string platform_file = argv[1];
 
+    size_t start_pos = platform_file.find("simgrid_configs/") + std::string("simgrid_configs/").size();
+    size_t end_pos = platform_file.find("/", start_pos);
+    std::string node_name = platform_file.substr(start_pos, end_pos - start_pos);
+    node_name = node_name.substr(0, node_name.find("_network.xml"));
+    std::cout << "Node name: " << node_name << std::endl;    XBT_INFO("Node name: %s", node_name.c_str());
     /* prepare to launch the actors */
 
     std::vector<std::string> argSender;
@@ -104,13 +121,34 @@ int main(int argc, char *argv[]) {
         // No parameter at all? Then use the default value
         argSender.emplace_back("25000");
     }
-    sg4::Actor::create("sender", e.host_by_name(std::string("jgoldverg@gmail.com_ccuc")), sender, argSender);
-    sg4::Actor::create("receiver", e.host_by_name(std::string("host9")), receiver, argReceiver);
 
-    simgrid::s4u::Host* host = e.host_by_name(std::string("host1"));
+    sg4::Actor::create("sender", e.host_by_name(node_name), sender, argSender);
+    sg4::Actor::create("receiver", e.host_by_name("destination"), receiver, argReceiver);
+
     /* And now, launch the simulation */
+    double start_time = sg4::Engine::get_clock();
     e.run();
-    // std::cout << "host1, host consumed " << sg_host_get_consumed_energy(host) << std::endl;
 
+    double end_time = sg4::Engine::get_clock();
+    XBT_INFO("Simulation time: %f s", end_time - start_time);
+
+    json output;
+    output["transfer_duration"] = sg4::Engine::get_clock();
+    json host_energy;
+    json link_energy;
+
+    for (sg4::Host *host : e.get_all_hosts()) {
+        host_energy[host->get_name()] = sg_host_get_consumed_energy(host);
+    }
+    for (sg4::Link *link : e.get_all_links()) {
+        link_energy[link->get_name()] = sg_link_get_consumed_energy(link);
+    }
+
+    output["hosts"] = host_energy;
+    output["links"] = link_energy;
+
+    std::ofstream file("/workspace/data/energy_consumption_" + node_name + "_.json");
+    file << output.dump(4);
+    file.close();
     return 0;
 }
