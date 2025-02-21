@@ -3,8 +3,8 @@
 set -e  # Exit immediately if a command fails
 
 # Create and navigate to the build directory
-mkdir -p build
-cd build
+mkdir -p /workspace/simgrid_environment/build
+cd /workspace/simgrid_environment/build
 
 # Run CMake and build the project
 cmake ..

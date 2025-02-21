@@ -3,12 +3,15 @@ from typing import List
 import pandas as pd
 from pathlib import Path
 import click
+from datetime import datetime
 from models import IpToLonAndLat, IpOrderAndForecastData, read_in_node_file, read_in_job_file, read_in_ip_map, \
     parse_speed_to_bps
-from SimGridSimulator import SimGridSimulator
+from algos import PlanAlgorithm
+from simgrid_simulator import SimGridSimulator
+from algos import planner_factory
 
 
-class SchedulerAlgo:
+class Scheduler:
 
     def __init__(self, node_file_path, ip_list_file_path, job_file_path):
         # Load in Nodes
@@ -25,8 +28,8 @@ class SchedulerAlgo:
         self.job_list = read_in_job_file(job_file_path)
         click.secho(f"Loaded {len(self.job_list)} Jobs", fg="green")
 
-
-        self.simulator = SimGridSimulator(traceroute_data=ip_pmeter_measurements_traceroute, node_list=self.node_list, job_list=self.job_list)
+        self.simulator = SimGridSimulator(traceroute_data=ip_pmeter_measurements_traceroute, node_list=self.node_list,
+                                          job_list=self.job_list)
         self.simulator.create_xml_for_traceroute()
 
         self.ci_matrix = None
@@ -34,7 +37,6 @@ class SchedulerAlgo:
         self.forecasts: dict[IpToLonAndLat, IpOrderAndForecastData] = {}
 
     def load_in_forecasts(self, forecasts_file_path=None):
-
         if os.path.exists(forecasts_file_path):
             self.forecasts_df = pd.read_json(forecasts_file_path)
             click.secho(f"Loaded forecasts from {forecasts_file_path}, entries loaded {len(self.forecasts_df)}")
@@ -46,6 +48,7 @@ class SchedulerAlgo:
         with click.progressbar(self.ip_list, show_eta=True, show_percent=True) as ips:
             for ipCoord in ips:
                 forecast_list = ipForecast.fetch_forecast_for_ip(ipCoord)
+                click.secho(forecast_list)
                 self.forecasts[ipCoord] = ipForecast
                 for idx, forecast in enumerate(forecast_list):
                     forecast_entries.append({
@@ -54,51 +57,44 @@ class SchedulerAlgo:
                         'ip': forecast['ip'],
                         'forecast_idx': idx
                     })
-                # click.secho(f"Processed {idx}/{len(self.ip_list)}: {ipCoord.ip}", fg="blue", dim=True)
+                click.secho(f"Processed {idx}/{len(self.ip_list)}: {ipCoord.ip}", fg="blue", dim=True)
         self.forecasts_df = pd.DataFrame(forecast_entries)
 
         if forecasts_file_path:
-            self.forecasts_df.to_json(forecasts_file_path)
+            self.forecasts_df.to_json(forecasts_file_path + f"_{datetime.now().isoformat()}.json")
             click.secho(f"Forecasts saved to {forecasts_file_path}")
 
         click.secho("Forecasts downloaded and processed successfully!", fg="green", bold=True)
 
-    def create_plan(self, simgrid_options):
+    def create_plan(self, plan_algo: PlanAlgorithm):
         """
         Every job needs to have a node and start time on that node assigned without collisions
         :return: Some kind of dictionary
         """
-        self.simulator.run_simulation(simgrid_options)
+        planner = planner_factory(plan_algo, self.simulator, self.associations_df, self.node_list)
+        planner.plan()
 
-
+    def generate_energy_data(self):
+        # Generates all energy data for jobs.
+        for node in self.node_list:
+            for job in self.job_list:
+                self.simulator.run_simulation(node['name'], 1, job['bytes'], job['id'])
 
     def create_intervals(self):
         data_list = []  # Collect data here
         forecast_idx = 0
+        click.secho(f"{self.forecasts_df}")
         mean_per_forecast = self.forecasts_df.groupby('forecast_idx')['ci'].mean()
         for ci_avg in mean_per_forecast:
-
-            # click.secho(f"\nProcessing Forecast {forecast_idx}/{len(self.forecasts)} with CI Avg={ci_avg}", fg="cyan",
-            #             bold=True)
-
             for node in self.node_list:
-                nic_speed_bps = parse_speed_to_bps(node["NIC_SPEED"])
-                # click.secho(f"  Node: {node['name']} (NIC Speed: {node['NIC_SPEED']})", fg="green")
-
                 for job in self.job_list:
                     data_bits = int(job['bytes']) * 8
-                    transfer_time_seconds = data_bits / nic_speed_bps
-                    joules_for_node_max = transfer_time_seconds * node['power']['max']
-                    joules_for_node_min = transfer_time_seconds * node['power']['min']
-                    emissions = self.carbon_emissions_formula(joules_for_node_max, ci_avg)
-
-                    # Log key details
-                    # click.secho(
-                    #     f"    Job {job['id']} -> Transfer: {transfer_time_seconds:.2f}s, {data_bits}Bps, Emissions: {emissions:.2f} kg CO2",
-                    #     fg="yellow")
-                    # click.secho(f"        Details: JoulesMin: {joules_for_node_min}, JoulesMax: {joules_for_node_max}")
-                    # click.secho(
-                    #     f"Forecast {forecast_idx} | Node: {node['name']} | Job: {job['id']} | Emissions: {emissions:.2f} kg CO2")
+                    node_job_energy_data = self.simulator.parse_simulation_output(node['name'], job['id'])
+                    transfer_time_seconds = node_job_energy_data['transfer_duration']
+                    throughput = data_bits / transfer_time_seconds  # bps
+                    total_energy = int(node_job_energy_data['total_energy_hosts']) + int(
+                        node_job_energy_data['total_link_energy'])
+                    emissions = self.carbon_emissions_formula(total_energy, ci_avg)
 
                     # Append data to list
                     data_list.append({
@@ -106,18 +102,20 @@ class SchedulerAlgo:
                         "job_id": job['id'],
                         "forecast_id": forecast_idx,
                         "transfer_time": transfer_time_seconds,
-                        "throughput": nic_speed_bps,
-                        "max_energy": joules_for_node_max,
-                        "min_energy": joules_for_node_min,
+                        "throughput": throughput,
+                        "host_joules": node_job_energy_data['total_energy_hosts'],
+                        "link_joules": node_job_energy_data['total_link_energy'],
+                        "total_joules": total_energy,
                         "avg_ci": ci_avg,
                         "carbon_emissions": emissions
                     })
-            forecast_idx +=1
+            forecast_idx += 1
 
         # Convert list to DataFrame (efficient)
         associations_df = pd.DataFrame(data_list)
-        associations_df.to_csv('../config/associations_df.csv')
-        click.secho("\nIntervals created successfully!", fg="green", bold=True)
+        association_path = '/workspace/data/associations_df.csv'
+        associations_df.to_csv(association_path)
+        click.secho(f"\nIntervals created successfully path {association_path}", fg="green", bold=True)
         self.associations_df = associations_df
         return associations_df  # Return the DataFrame
 
@@ -153,6 +151,7 @@ def get_unique_ips(pmeter_data: List[List[IpToLonAndLat]]) -> List[IpToLonAndLat
     for ip_objects in pmeter_data:
         print(ip_objects)
         for ip_object in ip_objects:
-            unique_ips.add(IpToLonAndLat(ip=ip_object.ip, lat=ip_object.lat, lon=ip_object.lon, rtt=ip_object.rtt, ttl=ip_object.ttl))
+            unique_ips.add(IpToLonAndLat(ip=ip_object.ip, lat=ip_object.lat, lon=ip_object.lon, rtt=ip_object.rtt,
+                                         ttl=ip_object.ttl))
 
     return list(unique_ips)

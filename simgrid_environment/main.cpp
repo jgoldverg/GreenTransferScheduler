@@ -1,8 +1,3 @@
-/* Copyright (c) 2017-2024. The SimGrid Team. All rights reserved.          */
-
-/* This program is free software; you can redistribute it and/or modify it
- * under the terms of the license (GNU LGPL) which comes with this package. */
-
 #include "simgrid/plugins/energy.h"
 #include "xbt/log.h"
 #include "xbt/random.hpp"
@@ -122,6 +117,11 @@ int main(int argc, char *argv[]) {
         argSender.emplace_back("25000");
     }
 
+    std::string job_id = "";
+    if(argc > 4) {
+        job_id = argv[4];
+    }
+
     sg4::Actor::create("sender", e.host_by_name(node_name), sender, argSender);
     sg4::Actor::create("receiver", e.host_by_name("destination"), receiver, argReceiver);
 
@@ -136,18 +136,23 @@ int main(int argc, char *argv[]) {
     output["transfer_duration"] = sg4::Engine::get_clock();
     json host_energy;
     json link_energy;
-
+    double total_energy_hosts = 0.0;
     for (sg4::Host *host : e.get_all_hosts()) {
+        total_energy_hosts += sg_host_get_consumed_energy(host);
         host_energy[host->get_name()] = sg_host_get_consumed_energy(host);
     }
+    double total_link_energy = 0.0;
     for (sg4::Link *link : e.get_all_links()) {
+        total_link_energy += sg_link_get_consumed_energy(link);
         link_energy[link->get_name()] = sg_link_get_consumed_energy(link);
     }
 
     output["hosts"] = host_energy;
     output["links"] = link_energy;
+    output["total_energy_hosts"] = total_energy_hosts;
+    output["total_link_energy"] = total_link_energy;
 
-    std::ofstream file("/workspace/data/energy_consumption_" + node_name + "_.json");
+    std::ofstream file("/workspace/data/energy_consumption_" + node_name + "_"+ job_id+"_.json");
     file << output.dump(4);
     file.close();
     return 0;

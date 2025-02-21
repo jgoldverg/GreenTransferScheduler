@@ -95,19 +95,23 @@ class IpOrderAndForecastData:
         Helper method to fetch forecast data for a single IP coordinate.
         """
         headers = {"auth-token": os.getenv("ELECTRICITY_MAPS_FORECAST_TOKEN")}
-        param = {"lon": ipCoordinate.lon, "lat": ipCoordinate.lat}
+        param = {"lon": ipCoordinate.lon, "lat": ipCoordinate.lat, "horizonHours": 24}
         resp = requests.get("https://api.electricitymap.org/v3/carbon-intensity/forecast", params=param,
                             headers=headers)
-        data = resp.json()
-        forecast_list = data.get('forecast', [])
-        results = []
-        for entry in forecast_list:
-            results.append({
-                "ip": ipCoordinate.ip,
-                "timestamp": entry['datetime'],
-                "ci": entry['carbonIntensity']
-            })
-        return results
+        if 199 < resp.status_code < 300:
+            data = resp.json()
+            forecast_list = data.get('forecast', [])
+            results = []
+            for entry in forecast_list:
+                results.append({
+                    "ip": ipCoordinate.ip,
+                    "timestamp": entry['datetime'],
+                    "ci": entry['carbonIntensity']
+                })
+            return results
+        else:
+            click.secho(f"\nElectricity Maps Gave status code: {resp.status_code} with body {resp.text}")
+            raise Exception(resp.text)
 
     def create_and_populate_forecast(self, forecasts_file_path):
         list_json_forecast = self.fetch_forecast_for_ip(self.ipCoordinate)
