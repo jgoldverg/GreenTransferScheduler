@@ -75,7 +75,7 @@ class SimGridSimulator:
                     links.append((routers[prev_ip], router_id, link_id))
 
                     link_element = ET.SubElement(
-                        zone, "link", id=link_id, bandwidth="10Gbps", latency=f"{hop.rtt}ms", sharing_policy="SHARED"
+                        zone, "link", id=link_id, bandwidth="10Gbps", latency=f"{hop.rtt}s", sharing_policy="SHARED"
                     )
                     ET.SubElement(link_element, "prop", id="wattage_range", value="80.0:130.0")
                     ET.SubElement(link_element, "prop", id="wattage_off", value="10")
@@ -85,6 +85,13 @@ class SimGridSimulator:
             for src, dst, link_id in links:
                 ET.SubElement(route, "link_ctn", id=link_id)
 
+            for i in range(len(trace_route) - 1):
+                src_router = source_router if i == 0 else f"router{i}"
+                dst_router = f"router{i + 1}" if i < len(trace_route) - 2 else destination_router
+                link_id = f"link{i + 1}"
+
+                route = ET.SubElement(zone, "route", src=src_router, dst=dst_router)
+                ET.SubElement(route, "link_ctn", id=link_id)
             # Convert to string and save
             xml_string = ET.tostring(platform, encoding="utf-8").decode("utf-8")
             xml_string = f'<?xml version="1.0"?>\n{doctype}{xml_string}'

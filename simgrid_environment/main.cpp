@@ -31,17 +31,28 @@ static void sender(std::vector<std::string> args) {
     long chunk_size = comm_size / flow_amount;
     long remainder = comm_size % flow_amount;
 
+    // Simulate buffer preparation overhead (1 integer operation per byte)
+    double buffer_prep_work = comm_size * 1; // 1 integer operation per byte
+    sg4::this_actor::execute(buffer_prep_work); // Synchronous execution
+    XBT_INFO("Buffer preparation completed");
+
     sg4::ActivitySet comms;  // Activity set to track parallel transfers
 
     for (int i = 0; i < flow_amount; i++) {
         long this_chunk_size = (i == flow_amount - 1) ? chunk_size + remainder : chunk_size;
+
+        // Simulate buffer copying overhead (1 integer operation per byte)
+        double buffer_copy_work = this_chunk_size * 1; // 1 integer operation per byte
+        sg4::this_actor::execute(buffer_copy_work); // Synchronous execution
+
         XBT_INFO("Flow %d sending %ld bytes", i, this_chunk_size);
 
         // Asynchronous put to enable parallel flow transfers
         comms.push(mailbox->put_async(bprintf("%d", i), this_chunk_size));
     }
 
-    comms.wait_all();  // Wait for all chunks to be transferred
+    // Wait for all communication activities to complete
+    comms.wait_all();
     XBT_INFO("Sender finished sending all flows.");
 }
 
@@ -55,15 +66,22 @@ static void receiver(std::vector<std::string> args) {
     sg4::Mailbox *mailbox = sg4::Mailbox::by_name("message");
 
     std::vector<char *> data(flow_amount);
-    sg4::ActivitySet comms;
+    sg4::ActivitySet comms;  // Activity set to track parallel transfers
 
     for (int i = 0; i < flow_amount; i++) {
-        comms.push(mailbox->get_async<char>(&data[i]));  // Async receive
+        // Asynchronous receive
+        comms.push(mailbox->get_async<char>(&data[i]));
     }
 
-    comms.wait_all();  // Ensure all flows are received
+    // Wait for all communication activities to complete
+    comms.wait_all();
 
     for (int i = 0; i < flow_amount; i++) {
+        // Simulate buffer processing overhead (1 integer operation per byte)
+        long this_chunk_size = sizeof(data[i]);
+        double buffer_process_work = this_chunk_size * 1; // 1 integer operation per byte
+        sg4::this_actor::execute(buffer_process_work); // Synchronous execution
+
         XBT_INFO("Flow %d received %ld bytes", i, sizeof(data[i]));
         xbt_free(data[i]);  // Free allocated memory
     }

@@ -1,10 +1,6 @@
-import math
-
-import numpy as np
 import pandas as pd
 from enum import Enum
 import click
-from simgrid_simulator import SimGridSimulator
 import pulp
 
 
@@ -80,23 +76,18 @@ class BruteForceGreenPlanner:
 
             if best_slot is not None:
                 for slot in best_slot:
-                    # Calculate allocated time for this slot
-                    allocated_time = min(3600, job_duration)
-                    job_duration -= allocated_time
-
                     # Look up carbon emissions for this allocation
                     carbon_emissions = self.associations_df[
                         (self.associations_df['job_id'] == job['job_id']) &
                         (self.associations_df['node'] == best_node) &
                         (self.associations_df['forecast_id'] == slot)
-                    ]['carbon_emissions'].values[0]
+                        ]['carbon_emissions'].values[0]
 
                     # Add the allocation to the schedule
                     schedule.append({
                         'job_id': job['job_id'],
                         'node': best_node,
                         'forecast_id': slot,
-                        'allocated_time': allocated_time,
                         'carbon_emissions': carbon_emissions
                     })
 
@@ -108,11 +99,6 @@ class BruteForceGreenPlanner:
         # Save and return the schedule
         schedule_df.to_csv('../schedules/green_schedule.csv', index=False)
         return schedule_df
-
-
-import pulp
-import pandas as pd
-import click
 
 
 class LinearGreenPlanner:
