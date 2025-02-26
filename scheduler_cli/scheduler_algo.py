@@ -71,7 +71,7 @@ class Scheduler:
         Every job needs to have a node and start time on that node assigned without collisions
         :return: Some kind of dictionary
         """
-        planner = planner_factory(plan_algo, self.simulator, self.associations_df, self.node_list)
+        planner = planner_factory(plan_algo, self.associations_df, self.node_list)
         planner.plan()
 
     def generate_energy_data(self):
@@ -118,27 +118,6 @@ class Scheduler:
         click.secho(f"\nIntervals created successfully path {association_path}", fg="green", bold=True)
         self.associations_df = associations_df
         return associations_df  # Return the DataFrame
-
-    # def create_plan(self):
-    #     for ipCoord in self.list_ip_coord:
-    #         measurement_forecast = IpOrderAndForecastData(ipCoord)
-    #         measurement_forecast.create_and_populate_forecast()
-
-    # def visulize_ci_matrix(self, forecast, entry='throughput'):
-    #     # Create a new matrix with just the throughput values
-    #     throughput_matrix = self.ci_matrix.applymap(lambda x: x[entry] if isinstance(x, dict) else 0)
-    #
-    #     # Create the heatmap
-    #     plt.figure(figsize=(12, 8))
-    #     sns.heatmap(throughput_matrix, annot=True, fmt=".2f", cmap="viridis", cbar_kws={'label': 'Throughput (bps)'})
-    #
-    #     # Add titles and labels
-    #     plt.title("Node-Job Throughput Heatmap")
-    #     plt.xlabel("Job ID")
-    #     plt.ylabel("Node Name")
-    #
-    #     # Show the plot
-    #     plt.savefig(f"graphs/ci_heat_graph_{forecast}.png")
 
     # SLA represents the baseline improvement the scheduled ci needs to experience
     def carbon_emissions_formula(self, joules, ci):
