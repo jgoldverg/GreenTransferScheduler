@@ -5,9 +5,10 @@
     "NIC_SPEED": "10Gbps",
     "CPU": 64,
     "power": {
-      "min": 8.5,
-      "max": 31
-    }
+      "min": 9,
+      "max": 125
+    },
+    "gf": "26.43"
   },
   {
     "name": "jgoldverg@gmail.com_system76",
@@ -15,8 +16,20 @@
     "NIC_SPEED": "1Gbps",
     "CPU": 32,
     "power": {
-      "min": 40,
-      "max": 350
-    }
+      "min": 1,
+      "max": 4095
+    },
+    "gf": "28.54"
+  },
+  {
+    "name": "jgoldverg@gmail.com_tacc",
+    "total_ram": 1,
+    "NIC_SPEED": "10Gbps",
+    "CPU": 1,
+    "power": {
+      "min": 60,
+      "max": 150
+    },
+    "gf": "25.17"
   }
 ]

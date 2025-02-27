@@ -1,5 +1,6 @@
 import os
-from typing import List
+from pathlib import Path
+from typing import List, Union
 import json
 import pandas as pd
 import click
@@ -147,22 +148,45 @@ class IpOrderAndForecastData:
                 click.secho(f"Missing data for IP {self.ipCoordinate.ip}, skipping entry.", fg="red")
 
 
-def read_in_ip_map(ip_path) -> List[List[IpToLonAndLat]]:
+def read_in_ip_map(ip_path: Union[str, Path]) -> List[List[IpToLonAndLat]]:
     list_of_ip_objects = []
-    print(f"Loading traceroute from path: {ip_path}")
 
-    with open(ip_path, 'r') as f:
-        try:
-            pmeter_data = json.load(f)  # Load the entire file at once
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON: {e}")
-            return []
+    # If the path is a directory, process all JSON files inside
+    if os.path.isdir(ip_path):
+        json_files = [f for f in os.listdir(ip_path) if f.endswith(".json")]
 
-    # Convert each IP entry to an IpToLonAndLat object
+        for file in json_files:
+            file_path = os.path.join(ip_path, file)
+            ip_objects = process_single_file(file_path)  # Use helper function for files
+            if ip_objects:
+                list_of_ip_objects.append(ip_objects)
+
+    # If it's a single file, process it directly
+    elif os.path.isfile(ip_path):
+        ip_objects = process_single_file(ip_path)
+        if ip_objects:
+            list_of_ip_objects.append(ip_objects)
+
+    else:
+        print(f"Invalid path: {ip_path}")
+
+    return list_of_ip_objects
+
+
+def process_single_file(file_path: str) -> List[IpToLonAndLat]:
+    """Helper function to process a single JSON file."""
+    try:
+        with open(file_path, 'r') as f:
+            pmeter_data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Error decoding JSON in {file_path}: {e}")
+        return []
+
     ip_obj_list = []
     for key, value in pmeter_data.items():
         if key in ['time', 'node_id', 'job_id']:
             continue  # Skip metadata keys
+
         ip_obj = IpToLonAndLat(
             ip=key,
             lon=value['lon'],
@@ -172,8 +196,7 @@ def read_in_ip_map(ip_path) -> List[List[IpToLonAndLat]]:
         )
         ip_obj_list.append(ip_obj)
 
-    list_of_ip_objects.append(ip_obj_list)
-    return list_of_ip_objects
+    return ip_obj_list
 
 
 def read_in_node_file(node_path):

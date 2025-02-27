@@ -13,7 +13,7 @@ from algos import planner_factory
 
 class Scheduler:
 
-    def __init__(self, node_file_path, ip_list_file_path, job_file_path):
+    def __init__(self, node_file_path, ip_list_file_path, job_file_path, update_forecasts):
         # Load in Nodes
         self.node_list = read_in_node_file(node_file_path)
         click.secho(f"Loaded {len(self.node_list)} Nodes", fg="green")
@@ -21,6 +21,7 @@ class Scheduler:
         # Load in Traceroute Measurements
         ip_pmeter_measurements_traceroute = read_in_ip_map(ip_list_file_path)
         self.ip_list = get_unique_ips(ip_pmeter_measurements_traceroute)
+        self.update_forecasts = update_forecasts
         click.secho(
             f"Loaded Total Traceroute Measurements {len(ip_pmeter_measurements_traceroute)} reduced to Unique IP's {len(self.ip_list)}",
             fg="green")
@@ -34,37 +35,53 @@ class Scheduler:
 
         self.ci_matrix = None
         self.ip_forecast = []
-        self.forecasts: dict[IpToLonAndLat, IpOrderAndForecastData] = {}
 
-    def load_in_forecasts(self, forecasts_file_path=None):
+    def load_in_forecasts(self, forecasts_file_path):
+        # Load directory or single file worth of traceroutes with lon,lat,
         if os.path.exists(forecasts_file_path):
-            self.forecasts_df = pd.read_json(forecasts_file_path)
-            click.secho(f"Loaded forecasts from {forecasts_file_path}, entries loaded {len(self.forecasts_df)}")
-            return
+            try:
+                self.forecasts_df = pd.read_csv(forecasts_file_path)
+                click.secho(f"Loaded {len(self.forecasts_df)} past forecasts from {forecasts_file_path}")
+            except Exception as e:
+                click.secho(f"Error loading existing forecasts: {e}", fg="red")
+                self.forecasts_df = pd.DataFrame()
+        else:
+            self.forecasts_df = pd.DataFrame()
 
         click.secho("Downloading forecasts from Electricity Maps...", fg="yellow", bold=True)
         ipForecast = IpOrderAndForecastData()
         forecast_entries = []
-        with click.progressbar(self.ip_list, show_eta=True, show_percent=True) as ips:
-            for ipCoord in ips:
-                forecast_list = ipForecast.fetch_forecast_for_ip(ipCoord)
-                click.secho(forecast_list)
-                self.forecasts[ipCoord] = ipForecast
-                for idx, forecast in enumerate(forecast_list):
-                    forecast_entries.append({
-                        'timestamp': forecast['timestamp'],
-                        'ci': forecast['ci'],
-                        'ip': forecast['ip'],
-                        'forecast_idx': idx
-                    })
-                click.secho(f"Processed {idx}/{len(self.ip_list)}: {ipCoord.ip}", fg="blue", dim=True)
-        self.forecasts_df = pd.DataFrame(forecast_entries)
+        if self.update_forecasts:
+            with click.progressbar(self.ip_list, show_eta=True, show_percent=True) as ips:
+                for ipCoord in ips:
+                    forecast_list = ipForecast.fetch_forecast_for_ip(ipCoord)
+                    for idx, forecast in enumerate(forecast_list):
+                        forecast_entries.append({
+                            'timestamp': forecast['timestamp'],
+                            'ci': forecast['ci'],
+                            'ip': forecast['ip'],
+                            'lat': ipCoord.lat,
+                            'lon': ipCoord.lon,
+                            'forecast_idx': idx
+                        })
+                    click.secho(f"Processed {ipCoord.ip}", fg="blue", dim=True)
 
-        if forecasts_file_path:
-            self.forecasts_df.to_json(forecasts_file_path + f"_{datetime.now().isoformat()}.json")
-            click.secho(f"Forecasts saved to {forecasts_file_path}")
+            # Convert new forecast entries to a DataFrame
+            new_forecasts_df = pd.DataFrame(forecast_entries)
 
-        click.secho("Forecasts downloaded and processed successfully!", fg="green", bold=True)
+            # Merge old and new forecasts, then drop duplicates based on timestamp
+            if not self.forecasts_df.empty:
+                self.forecasts_df = pd.concat([self.forecasts_df, new_forecasts_df], ignore_index=True)
+            else:
+                self.forecasts_df = new_forecasts_df
+
+            self.forecasts_df.drop_duplicates(inplace=True)
+
+            # Save updated forecasts
+            self.forecasts_df.to_csv(forecasts_file_path, index=False)
+            click.secho(f"Forecasts saved to {forecasts_file_path}", fg="green", bold=True)
+            click.secho("Forecasts downloaded and processed successfully!", fg="green", bold=True)
+
 
     def create_plan(self, plan_algo: PlanAlgorithm):
         """
@@ -83,7 +100,7 @@ class Scheduler:
     def create_intervals(self):
         data_list = []  # Collect data here
         forecast_idx = 0
-        click.secho(f"{self.forecasts_df}")
+        click.secho(f"Forecasts df: {self.forecasts_df}")
         mean_per_forecast = self.forecasts_df.groupby('forecast_idx')['ci'].mean()
         for ci_avg in mean_per_forecast:
             for node in self.node_list:
@@ -114,7 +131,7 @@ class Scheduler:
         # Convert list to DataFrame (efficient)
         associations_df = pd.DataFrame(data_list)
         association_path = '/workspace/data/associations_df.csv'
-        associations_df.to_csv(association_path)
+        associations_df.to_csv(association_path, index=False)
         click.secho(f"\nIntervals created successfully path {association_path}", fg="green", bold=True)
         self.associations_df = associations_df
         return associations_df  # Return the DataFrame

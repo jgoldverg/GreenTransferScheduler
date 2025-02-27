@@ -12,7 +12,7 @@ class PlanAlgorithm(Enum):
     RANDOM = "random"
     WORST_CASE = "worst"
     BRUTE_FORCE_GREEN_CASE = "green"
-    LINEAR_PROGRAMMING_GREEN = "lp_green"
+    LINEAR_PROGRAMMING_GREEN = "milp_green"
     ALL = "all"
 
 
@@ -110,7 +110,7 @@ class BruteForceGreenPlanner:
         return schedule_df
 
 
-class LinearGreenPlanner:
+class MixedIntegerLinearProgrammingGreenPlanner:
     def __init__(self, associations_df, node_list):
         self.associations_df = associations_df
         self.node_list = [node['name'] for node in node_list]
@@ -353,7 +353,7 @@ def planner_factory(algo: PlanAlgorithm, *args, **kwargs):
         PlanAlgorithm.RANDOM: RandomPlanner,
         PlanAlgorithm.WORST_CASE: WorstCasePlanner,
         PlanAlgorithm.BRUTE_FORCE_GREEN_CASE: BruteForceGreenPlanner,
-        PlanAlgorithm.LINEAR_PROGRAMMING_GREEN: LinearGreenPlanner,
+        PlanAlgorithm.LINEAR_PROGRAMMING_GREEN: MixedIntegerLinearProgrammingGreenPlanner,
         PlanAlgorithm.BASIC_CASE: BasicPlanner
     }
     return planners[PlanAlgorithm(algo)](*args, **kwargs)  # Instantiate the selected planner

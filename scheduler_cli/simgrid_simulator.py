@@ -40,17 +40,17 @@ class SimGridSimulator:
                     # First node should be named based on the provided node_name (source)
                     router_id = source_router
                     cores = str(node['CPU'])  # Source has the node's CPU cores
-                    speed = "1Gf"
+                    speed = str(node['gf'])
                 elif i == len(trace_route) - 1:
                     # Last node should be named "destination"
                     router_id = destination_router
                     cores = str(node['CPU'])  # Set default cores for destination
-                    speed = "1Gf"
+                    speed = str(node['gf'])
                 else:
                     # Intermediate routers (router1, router2, etc.)
                     router_id = f"router{i}"
                     cores = "4"  # Set default cores for routers
-                    speed = "1Gf"
+                    speed = "50Gf"
 
                 # Create the router element
                 router_element = ET.SubElement(
@@ -58,7 +58,13 @@ class SimGridSimulator:
                 )
 
                 # Add energy consumption properties
-                power_profile = "100.0:120.0:200.0" if i == 0 or i == len(trace_route) - 1 else "30.0:50.0:80.0"
+                if i == 0 or i == len(trace_route)-1:
+                    pwr_min = int(node['power']['min'])
+                    pwr_max = int(node['power']['max'])
+                    avg = (pwr_max + pwr_min)/2
+                    power_profile = f"{pwr_min}:{avg}:{pwr_max}"
+                else:
+                    power_profile = "50.0:275.0:500.0"
                 ET.SubElement(router_element, "prop", id="wattage_per_state", value=power_profile)
                 ET.SubElement(router_element, "prop", id="wattage_off", value="5")
 
