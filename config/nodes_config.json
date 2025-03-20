@@ -23,9 +23,9 @@
   },
   {
     "name": "jgoldverg@gmail.com_tacc",
-    "total_ram": 1,
+    "total_ram": 206,
     "NIC_SPEED": "10Gbps",
-    "CPU": 1,
+    "CPU": 24,
     "power": {
       "min": 60,
       "max": 150

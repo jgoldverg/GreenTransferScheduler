@@ -154,7 +154,7 @@ def read_in_ip_map(ip_path: Union[str, Path]) -> List[List[IpToLonAndLat]]:
     # If the path is a directory, process all JSON files inside
     if os.path.isdir(ip_path):
         json_files = [f for f in os.listdir(ip_path) if f.endswith(".json")]
-
+        click.secho(f"Found files: {json_files}", fg="green")
         for file in json_files:
             file_path = os.path.join(ip_path, file)
             ip_objects = process_single_file(file_path)  # Use helper function for files

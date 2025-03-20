@@ -40,17 +40,17 @@ class SimGridSimulator:
                     # First node should be named based on the provided node_name (source)
                     router_id = source_router
                     cores = str(node['CPU'])  # Source has the node's CPU cores
-                    speed = str(node['gf'])
+                    speed = str(float(node['gf']) * 1000000000) + "f"
                 elif i == len(trace_route) - 1:
                     # Last node should be named "destination"
                     router_id = destination_router
                     cores = str(node['CPU'])  # Set default cores for destination
-                    speed = str(node['gf'])
+                    speed = str(float(node['gf']) * 1000000000)+ "f"
                 else:
                     # Intermediate routers (router1, router2, etc.)
                     router_id = f"router{i}"
                     cores = "4"  # Set default cores for routers
-                    speed = "50Gf"
+                    speed = str(50 * 1000000000)+ "f"
 
                 # Create the router element
                 router_element = ET.SubElement(

@@ -1,14 +1,25 @@
 import os.path
+from enum import Enum
 from typing import List
 import pandas as pd
-from pathlib import Path
 import click
-from datetime import datetime
-from models import IpToLonAndLat, IpOrderAndForecastData, read_in_node_file, read_in_job_file, read_in_ip_map, \
-    parse_speed_to_bps
-from algos import PlanAlgorithm
+from models import IpToLonAndLat, IpOrderAndForecastData, read_in_node_file, read_in_job_file, read_in_ip_map
 from simgrid_simulator import SimGridSimulator
-from algos import planner_factory
+
+from algos.milp_green import MixedIntegerLinearProgrammingGreenPlanner
+from algos.basic_planner import BasicPlanner
+from algos.random_planner import RandomPlanner
+from algos.brute_force_green_planner import BruteForceGreenPlanner
+from algos.worst_case_planner import WorstCasePlanner
+
+
+class PlanAlgorithm(Enum):
+    BASIC_CASE = "basic"
+    RANDOM = "random"
+    WORST_CASE = "worst"
+    BRUTE_FORCE_GREEN_CASE = "green"
+    LINEAR_PROGRAMMING_GREEN = "milp_green"
+    ALL = "all"
 
 
 class Scheduler:
@@ -82,14 +93,20 @@ class Scheduler:
             click.secho(f"Forecasts saved to {forecasts_file_path}", fg="green", bold=True)
             click.secho("Forecasts downloaded and processed successfully!", fg="green", bold=True)
 
-
     def create_plan(self, plan_algo: PlanAlgorithm):
         """
         Every job needs to have a node and start time on that node assigned without collisions
         :return: Some kind of dictionary
         """
-        planner = planner_factory(plan_algo, self.associations_df, self.node_list)
-        planner.plan()
+        click.secho(f"Running algo: {plan_algo}")
+        if plan_algo == PlanAlgorithm.ALL:
+            for plan in PlanAlgorithm:
+                if plan == PlanAlgorithm.ALL: continue
+                planner = planner_factory(plan, self.associations_df, self.job_list, self.node_list)
+                planner.plan()
+        else:
+            planner = planner_factory(plan_algo, self.associations_df, self.job_list, self.node_list)
+            planner.plan()
 
     def generate_energy_data(self):
         # Generates all energy data for jobs.
@@ -151,3 +168,15 @@ def get_unique_ips(pmeter_data: List[List[IpToLonAndLat]]) -> List[IpToLonAndLat
                                          ttl=ip_object.ttl))
 
     return list(unique_ips)
+
+
+# Factory function to instantiate correct class
+def planner_factory(algo: PlanAlgorithm, *args, **kwargs):
+    planners = {
+        PlanAlgorithm.RANDOM: RandomPlanner,
+        PlanAlgorithm.WORST_CASE: WorstCasePlanner,
+        PlanAlgorithm.BRUTE_FORCE_GREEN_CASE: BruteForceGreenPlanner,
+        PlanAlgorithm.LINEAR_PROGRAMMING_GREEN: MixedIntegerLinearProgrammingGreenPlanner,
+        PlanAlgorithm.BASIC_CASE: BasicPlanner
+    }
+    return planners[PlanAlgorithm(algo)](*args, **kwargs)  # Instantiate the selected planner
