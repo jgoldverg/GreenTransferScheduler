@@ -1,93 +1,108 @@
 import random
+
+import click
 import numpy as np
 import pandas as pd
+from .output import OutputFormatter
 
 
 class RandomPlanner:
     def __init__(self, associations_df, job_list, node_list):
         self.associations_df = associations_df
-        self.node_list = [node['name'] for node in node_list]  # Extract node names
-        self.job_list = [job['id'] for job in job_list]  # Extract job IDs
+        self.node_list = node_list  # Keep full node objects for OutputFormatter
+        self.job_list = job_list  # Keep full job objects
         self.time_slots = sorted(associations_df['forecast_id'].unique())
 
-        # Track remaining capacity for each node and time slot
-        self.remaining_capacity = {node: {slot: 3600 for slot in self.time_slots} for node in self.node_list}
+        # Initialize OutputFormatter
+        self.output_formatter = OutputFormatter(
+            associations_df=self.associations_df,
+            job_list=job_list,
+            node_list=node_list,
+            time_slots=self.time_slots
+        )
 
-        # Carbon emissions for each job, time slot, and node combination
-        self.emissions = {
-            (int(row.job_id), int(row.forecast_id), row.node): row.carbon_emissions
+        # Track remaining capacity for each node and time slot
+        node_names = [node['name'] for node in node_list]
+        self.remaining_capacity = {
+            node['name']: {slot: 3600 for slot in self.time_slots}
+            for node in node_list
+        }
+
+        # Precompute metrics for all combinations
+        self.metrics = {
+            (int(row.job_id), int(row.forecast_id), row.node): {
+                'carbon': row.carbon_emissions,
+                'throughput': row.throughput
+            }
             for _, row in associations_df.iterrows()
         }
 
     def get_transfer_time(self, job_id):
-        """
-        Retrieve the transfer_time for a job from the associations_df.
-        """
-        transfer_time = self.associations_df[
+        """Retrieve the transfer_time for a job from the associations_df."""
+        return self.associations_df[
             self.associations_df['job_id'] == job_id
             ]['transfer_time'].values[0]
-        return transfer_time
 
     def plan(self):
-        schedule = []  # To store the final schedule
+        schedule = []
+        job_ids = [job['id'] for job in self.job_list]
+        random.shuffle(job_ids)  # Randomize job order
 
-        # Shuffle jobs to randomize assignment order
-        random.shuffle(self.job_list)
-
-        for job in self.job_list:
-            # Get job duration from associations_df
-            job_duration = self.get_transfer_time(job)
-
-            # Calculate the number of time slots required for the job
+        for job_id in job_ids:
+            job_duration = self.get_transfer_time(job_id)
             required_slots = int(np.ceil(job_duration / 3600))
-
-            # Find a feasible node and consecutive time slots for the job
             assigned = False
-            max_attempts = 100  # Limit the number of attempts to find a feasible assignment
+            max_attempts = 100
             attempts = 0
 
             while not assigned and attempts < max_attempts:
-                # Randomly select a node
                 node = random.choice(self.node_list)
+                node_name = node['name']
 
-                # Randomly select a starting time slot
-                # Ensure there are enough consecutive slots for the job
                 if required_slots > 1:
-                    # Only choose starting slots that allow for the required number of consecutive slots
                     start_slot = random.choice(self.time_slots[:-required_slots + 1])
                 else:
                     start_slot = random.choice(self.time_slots)
 
-                # Check if the required consecutive time slots are available
+                # Check capacity in consecutive slots
                 if all(
-                        self.remaining_capacity[node][start_slot + i] >= min(3600, job_duration - i * 3600)
+                        self.remaining_capacity[node_name][start_slot + i] >= min(3600, job_duration - i * 3600)
                         for i in range(required_slots)
                 ):
-                    # Assign the job to the consecutive time slots
+                    # Assign the job
                     for i in range(required_slots):
                         slot = start_slot + i
                         duration = min(3600, job_duration - i * 3600)
+
+                        # Get metrics for this assignment
+                        metrics = self.metrics.get((job_id, slot, node_name), {})
+
                         schedule.append({
-                            'job_id': job,
-                            'node': node,
+                            'idx': len(schedule),
+                            'job_id': job_id,
+                            'node': node_name,
                             'forecast_id': slot,
                             'allocated_time': duration,
-                            'carbon_emissions': self.emissions.get((job, slot, node), 0)
+                            'carbon_emissions': metrics.get('carbon', 0),
+                            'throughput': metrics.get('throughput', 0)
                         })
-                        # Update remaining capacity
-                        self.remaining_capacity[node][slot] -= duration
+
+                        # Update capacity
+                        self.remaining_capacity[node_name][slot] -= duration
                     assigned = True
                 attempts += 1
 
             if not assigned:
-                print(
-                    f"Warning: No feasible assignment found for job {job} (duration: {job_duration} seconds). Skipping.")
+                click.secho(
+                    f"Warning: No feasible assignment found for job {job_id} (duration: {job_duration}s). Skipping.",
+                    fg='yellow'
+                )
 
-        # Convert schedule to DataFrame
         schedule_df = pd.DataFrame(schedule)
-        schedule_df.reset_index(inplace=True)  # Add idx column
-        schedule_df.rename(columns={'index': 'idx'}, inplace=True)
 
-        # Save and return the schedule
-        schedule_df.to_csv('/workspace/schedules/random_planner.csv', index=False)
-        return schedule_df
+        # Use OutputFormatter for consistent output handling
+        return self.output_formatter.format_output(
+            schedule_df=schedule_df,
+            filename='random_schedule.csv',
+            optimization_mode='random'
+        )

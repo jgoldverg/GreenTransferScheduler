@@ -1,4 +1,5 @@
 import pandas as pd
+from .output import OutputFormatter  # Absolute import
 
 
 class BruteForceGreenPlanner:
@@ -7,35 +8,38 @@ class BruteForceGreenPlanner:
         self.jobs = jobs
         self.nodes = nodes
         self.job_list = sorted(
-            [job for job in jobs],  # Sort jobs by ID or other criteria
+            [job for job in jobs],
             key=lambda x: x['id']
         )
         self.columns = associations_df['node'].unique()
         self.rows = associations_df['forecast_id'].unique()
-        self.remaining_capacity = {node: {} for node in self.columns}  # Track available time intervals per node
+        self.remaining_capacity = {node: {} for node in self.columns}
+
+        # Initialize OutputFormatter
+        self.output_formatter = OutputFormatter(
+            associations_df=self.associations_df,
+            job_list=jobs,
+            node_list=nodes,
+            time_slots=sorted(associations_df['forecast_id'].unique())
+        )
 
     def find_greenest_slots(self, node_name, job_duration):
         """Finds the greenest slots for a job on a given node."""
         node_forecasts = self.associations_df[self.associations_df['node'] == node_name]
         available_slots = []
 
-        # Get all time intervals for the node
         for slot in self.rows:
             ci = node_forecasts[node_forecasts['forecast_id'] == slot]['carbon_emissions'].values[0]
             available_slots.append((slot, ci))
 
-        # Sort slots by carbon intensity (lowest first)
         available_slots.sort(key=lambda x: x[1])
-
         allocated_slots = []
         total_allocated_time = 0
 
         for slot, _ in available_slots:
-            # Check if the slot is already allocated
             if slot not in self.remaining_capacity[node_name]:
-                self.remaining_capacity[node_name][slot] = 3600  # Initialize slot capacity
+                self.remaining_capacity[node_name][slot] = 3600
 
-            # Allocate as much time as possible in this slot (up to remaining job duration)
             slot_time = min(self.remaining_capacity[node_name][slot], job_duration - total_allocated_time)
             if slot_time > 0:
                 allocated_slots.append((slot, slot_time))
@@ -53,14 +57,13 @@ class BruteForceGreenPlanner:
             best_node = None
             best_slots = None
             best_avg_ce = float('inf')
-            job_duration = self.associations_df[self.associations_df['job_id'] == job['id']]['transfer_time'].values[0]
+            job_duration = self.associations_df[
+                self.associations_df['job_id'] == job['id']
+                ]['transfer_time'].values[0]
 
-            # Evaluate all nodes (shifting in space)
             for node in self.columns:
-                # Evaluate all possible time slots (shifting in time)
                 allocated_slots = self.find_greenest_slots(node, job_duration)
-                if allocated_slots is not None:
-                    # Calculate the average carbon emissions for the allocated slots
+                if allocated_slots:
                     total_ce = 0
                     total_time = 0
                     for slot, slot_time in allocated_slots:
@@ -72,35 +75,41 @@ class BruteForceGreenPlanner:
                         total_time += slot_time
                     avg_ce = total_ce / total_time
 
-                    # Update the best allocation if this one is greener
                     if avg_ce < best_avg_ce:
                         best_avg_ce = avg_ce
                         best_node = node
                         best_slots = allocated_slots
 
-            if best_slots is not None:
+            if best_slots:
                 for slot, slot_time in best_slots:
-                    # Look up carbon emissions for this allocation
                     carbon_emissions = self.associations_df[
                         (self.associations_df['job_id'] == job['id']) &
                         (self.associations_df['node'] == best_node) &
                         (self.associations_df['forecast_id'] == slot)
                         ]['carbon_emissions'].values[0]
 
-                    # Add the allocation to the schedule
+                    # Include throughput for metrics calculation
+                    throughput = self.associations_df[
+                        (self.associations_df['job_id'] == job['id']) &
+                        (self.associations_df['node'] == best_node) &
+                        (self.associations_df['forecast_id'] == slot)
+                        ]['throughput'].values[0]
+
                     schedule.append({
+                        'idx': len(schedule),  # Add index for tracking
                         'job_id': job['id'],
                         'node': best_node,
                         'forecast_id': slot,
                         'allocated_time': slot_time,
-                        'carbon_emissions': carbon_emissions
+                        'carbon_emissions': carbon_emissions,
+                        'throughput': throughput  # Added for metrics
                     })
 
-        # Convert the schedule to a DataFrame
         schedule_df = pd.DataFrame(schedule)
-        schedule_df.reset_index(inplace=True)  # Add idx column
-        schedule_df.rename(columns={'index': 'idx'}, inplace=True)
 
-        # Save and return the schedule
-        schedule_df.to_csv('/workspace/schedules/green_schedule.csv', index=False)
-        return schedule_df
+        # Use OutputFormatter for consistent output handling
+        return self.output_formatter.format_output(
+            schedule_df=schedule_df,
+            filename='brute_force_green_schedule.csv',
+            optimization_mode='green'  # Indicates this is a green-optimized planner
+        )

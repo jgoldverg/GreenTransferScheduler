@@ -7,3 +7,5 @@ matplotlib
 seaborn
 pytest
 pulp
+gymnasium
+stable-baselines3

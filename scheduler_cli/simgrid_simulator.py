@@ -105,9 +105,9 @@ class SimGridSimulator:
     def run_simulation(self, node_name="jgoldverg@gmail.com_ccuc", flows=1, job_size=1000000000000, job_id=1):
         xml_file_path = "/workspace/config/simgrid_configs/"+node_name+"_network.xml"
         params = ["/workspace/simgrid_environment/run.sh", xml_file_path, str(flows), str(job_size), str(job_id)]
-        click.secho(f"Running Simgrid with parameters: {params}")
-        # result = subprocess.run(params,stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        result = subprocess.run(params)
+        # click.secho(f"Running Simgrid with parameters: {params}")
+        result = subprocess.run(params,stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # result = subprocess.run(params)
         # print(result.stdout)
         # print(result.stderr)
 

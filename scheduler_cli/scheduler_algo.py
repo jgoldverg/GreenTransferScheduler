@@ -1,4 +1,6 @@
+import concurrent.futures
 import os.path
+import pathlib
 from enum import Enum
 from typing import List
 import pandas as pd
@@ -11,6 +13,7 @@ from algos.basic_planner import BasicPlanner
 from algos.random_planner import RandomPlanner
 from algos.brute_force_green_planner import BruteForceGreenPlanner
 from algos.worst_case_planner import WorstCasePlanner
+from algos.rl_algo import RLGreenScheduler
 
 
 class PlanAlgorithm(Enum):
@@ -20,6 +23,7 @@ class PlanAlgorithm(Enum):
     BRUTE_FORCE_GREEN_CASE = "green"
     LINEAR_PROGRAMMING_GREEN = "milp_green"
     ALL = "all"
+    RL_GREEN_SCHEDULER = "rl_green"
 
 
 class Scheduler:
@@ -101,7 +105,7 @@ class Scheduler:
         click.secho(f"Running algo: {plan_algo}")
         if plan_algo == PlanAlgorithm.ALL:
             for plan in PlanAlgorithm:
-                if plan == PlanAlgorithm.ALL: continue
+                if plan == PlanAlgorithm.ALL or plan == PlanAlgorithm.RL_GREEN_SCHEDULER: continue
                 planner = planner_factory(plan, self.associations_df, self.job_list, self.node_list)
                 planner.plan()
         else:
@@ -109,12 +113,51 @@ class Scheduler:
             planner.plan()
 
     def generate_energy_data(self):
-        # Generates all energy data for jobs.
-        for node in self.node_list:
-            for job in self.job_list:
-                self.simulator.run_simulation(node['name'], 1, job['bytes'], job['id'])
+        """Parallel execution with Click progress tracking"""
+        tasks = [(node['name'], job['bytes'], job['id'])
+                 for node in self.node_list
+                 for job in self.job_list]
 
-    def create_intervals(self):
+        with click.progressbar(
+                length=len(tasks),
+                label="Running energy simulations",
+                show_pos=True,
+                show_percent=True,
+                bar_template='%(label)s  %(bar)s | %(info)s',
+                fill_char='=',
+                empty_char=' '
+        ) as bar:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+                futures = {}
+                for node_name, job_size, job_id in tasks:
+                    future = executor.submit(
+                        self.simulator.run_simulation,
+                        node_name,
+                        1,  # flows
+                        job_size,
+                        job_id
+                    )
+                    futures[future] = (node_name, job_id)
+
+                for future in concurrent.futures.as_completed(futures):
+                    node_name, job_id = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        click.secho(
+                            f"\nError in node={node_name}, job={job_id}: {str(e)}",
+                            fg="red",
+                            err=True
+                        )
+                    finally:
+                        bar.update(1)  # Ensure progress always advances
+
+    def read_in_associations_df(self, path):
+        assoc_path = pathlib.Path(path)
+        if assoc_path.exists():
+            self.associations_df = pd.read_csv(path)
+
+    def create_intervals(self, associations_df_path):
         data_list = []  # Collect data here
         forecast_idx = 0
         click.secho(f"Forecasts df: {self.forecasts_df}")
@@ -147,9 +190,8 @@ class Scheduler:
 
         # Convert list to DataFrame (efficient)
         associations_df = pd.DataFrame(data_list)
-        association_path = '/workspace/data/associations_df.csv'
-        associations_df.to_csv(association_path, index=False)
-        click.secho(f"\nIntervals created successfully path {association_path}", fg="green", bold=True)
+        associations_df.to_csv('../data/'+associations_df_path, index=False)
+        click.secho(f"\nIntervals created successfully path {associations_df_path}", fg="green", bold=True)
         self.associations_df = associations_df
         return associations_df  # Return the DataFrame
 
@@ -177,6 +219,7 @@ def planner_factory(algo: PlanAlgorithm, *args, **kwargs):
         PlanAlgorithm.WORST_CASE: WorstCasePlanner,
         PlanAlgorithm.BRUTE_FORCE_GREEN_CASE: BruteForceGreenPlanner,
         PlanAlgorithm.LINEAR_PROGRAMMING_GREEN: MixedIntegerLinearProgrammingGreenPlanner,
-        PlanAlgorithm.BASIC_CASE: BasicPlanner
+        PlanAlgorithm.BASIC_CASE: BasicPlanner,
+        PlanAlgorithm.RL_GREEN_SCHEDULER: RLGreenScheduler
     }
     return planners[PlanAlgorithm(algo)](*args, **kwargs)  # Instantiate the selected planner
