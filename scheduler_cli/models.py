@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Dict
 import json
 import pandas as pd
 import click
@@ -38,18 +38,19 @@ def parse_speed_to_bps(speed_str):
 
 # Key class for all forecasts related to this IP: Lat and Lon pair
 class IpToLonAndLat:
-    def __init__(self, ip, lon, lat, rtt, ttl):
+    def __init__(self, ip, lon, lat, rtt, ttl, node_id):
         self.ip = ip
         self.lon = lon
         self.lat = lat
         self.rtt = rtt
         self.ttl = ttl
+        self.node_id = node_id
 
     def __eq__(self, other):
         # Define equality based on the attributes of the object
         if isinstance(other, IpToLonAndLat):
-            return (self.ip, self.lon, self.lat, self.rtt, self.ttl) == (
-                other.ip, other.lon, other.lat, other.rtt, other.ttl)
+            return (self.ip, self.lon, self.lat, self.rtt, self.ttl, self.node_id) == (
+                other.ip, other.lon, other.lat, other.rtt, other.ttl, other.node_id)
         return False
 
     def __hash__(self):
@@ -66,7 +67,8 @@ class IpToLonAndLat:
             'lon': self.lon,
             'lat': self.lat,
             'rtt': self.rtt,
-            'ttl': self.ttl
+            'ttl': self.ttl,
+            'node_id': self.node_id
         }
 
 
@@ -148,33 +150,33 @@ class IpOrderAndForecastData:
                 click.secho(f"Missing data for IP {self.ipCoordinate.ip}, skipping entry.", fg="red")
 
 
-def read_in_ip_map(ip_path: Union[str, Path]) -> List[List[IpToLonAndLat]]:
-    list_of_ip_objects = []
-
+def read_in_ip_map(ip_path: Union[str, Path]) -> Dict[str, List[IpToLonAndLat]]:
     # If the path is a directory, process all JSON files inside
+    node_to_traceroute: Dict[str, List[IpToLonAndLat]] = {}
+
     if os.path.isdir(ip_path):
         json_files = [f for f in os.listdir(ip_path) if f.endswith(".json")]
-        click.secho(f"Found files: {json_files}", fg="green")
         for file in json_files:
             file_path = os.path.join(ip_path, file)
-            ip_objects = process_single_file(file_path)  # Use helper function for files
-            if ip_objects:
-                list_of_ip_objects.append(ip_objects)
+            ip_objects = process_single_file(file_path)
+            node_id = ip_objects[0].node_id
+            node_to_traceroute[node_id] = ip_objects
 
     # If it's a single file, process it directly
     elif os.path.isfile(ip_path):
         ip_objects = process_single_file(ip_path)
-        if ip_objects:
-            list_of_ip_objects.append(ip_objects)
-
+        node_to_traceroute[ip_objects[0].node_id] = ip_objects
     else:
         print(f"Invalid path: {ip_path}")
 
-    return list_of_ip_objects
+    return node_to_traceroute
 
 
 def process_single_file(file_path: str) -> List[IpToLonAndLat]:
     """Helper function to process a single JSON file."""
+    head, tail = os.path.split(file_path)
+    traceroute_measurement = tail.split(".json")[0]
+    traceroute_measurement = traceroute_measurement.split("_")[0]
     try:
         with open(file_path, 'r') as f:
             pmeter_data = json.load(f)
@@ -192,7 +194,8 @@ def process_single_file(file_path: str) -> List[IpToLonAndLat]:
             lon=value['lon'],
             lat=value['lat'],
             rtt=value['rtt'],
-            ttl=value['ttl']
+            ttl=value['ttl'],
+            node_id=traceroute_measurement
         )
         ip_obj_list.append(ip_obj)
 
@@ -203,6 +206,18 @@ def read_in_node_file(node_path):
     with open(node_path, 'r') as f:
         node_list = json.load(f)  # Parse the entire JSON array at once
     return node_list
+
+
+def read_in_node_list_to_map(node_path):
+    with open(node_path, 'r') as f:
+        node_list = json.load(f)
+        node_map = {}
+        for node in node_list:
+            node_name = node['name']
+            if node_name not in node_map:
+                node_map[node_name] = node
+
+        return node_map
 
 
 def read_in_job_file(job_file_path):

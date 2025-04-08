@@ -1,6 +1,6 @@
 [
   {
-    "name": "jgoldverg@gmail.com_ccuc",
+    "name": "jgoldverg@gmail.com-ccuc",
     "total_ram": 128,
     "NIC_SPEED": "10Gbps",
     "CPU": 64,
@@ -8,21 +8,23 @@
       "min": 9,
       "max": 125
     },
-    "gf": "26.43"
+    "gf": "26.43",
+    "type": "source"
   },
   {
-    "name": "jgoldverg@gmail.com_system76",
-    "total_ram": 32,
+    "name": "jgoldverg@gmail.com-cali",
+    "total_ram": 8,
     "NIC_SPEED": "1Gbps",
-    "CPU": 32,
+    "CPU": 2,
     "power": {
       "min": 1,
       "max": 4095
     },
-    "gf": "28.54"
+    "gf": "20",
+    "type": "source"
   },
   {
-    "name": "jgoldverg@gmail.com_tacc",
+    "name": "jgoldverg@gmail.com-tacc",
     "total_ram": 206,
     "NIC_SPEED": "10Gbps",
     "CPU": 24,
@@ -30,6 +32,19 @@
       "min": 60,
       "max": 150
     },
-    "gf": "25.17"
+    "gf": "25.17",
+    "type": "source"
+  },
+  {
+    "name": "jgoldverg@gmail.com-macmini",
+    "total_ram": 16,
+    "NIC_SPEED": "1Gbps",
+    "CPU": 8,
+    "power": {
+      "min": 5,
+      "max": 65
+    },
+    "gf": "25.17",
+    "type": "destination"
   }
 ]

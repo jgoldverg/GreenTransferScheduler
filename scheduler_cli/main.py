@@ -18,15 +18,16 @@ def scheduler_cli():
 @scheduler_cli.command()
 @click.argument('plan_algo', default=PlanAlgorithm.BRUTE_FORCE_GREEN_CASE.value,
                 type=click.Choice([algo.value for algo in PlanAlgorithm]))
-@click.option('--trace_route', type=click.Path(), default='../config/traceroutes/many_sources_to_one_transfer_node',
+@click.option('--trace_route', type=click.Path(), default='../config/traceroutes/many_sources_to_one_transfer_node/',
               show_default=True,
               help="Path to the trace route file.")
 @click.option('--job_file', type=click.Path(),
               default='../config/jobs_config/jobs.json',
               show_default=True,
               help="Path to the job file.")
-@click.option('--node_file', type=click.Path(), default='../config/node_configs/nodes_config.json', show_default=True,
-              help="Path to the node file.")
+@click.option("--nodes_config", type=click.Path(),
+              default="../config/node_configs/nodes_config.json",
+              help="Path to source nodes")
 @click.option('--forecast-file', type=click.Path(), default='../data/forecast_data.csv',
               show_default=True,
               help="Path to the file containing electricity maps forecast for every ip in a trace file.")
@@ -36,12 +37,28 @@ def scheduler_cli():
               help="Path to the associations to bypass running simgrid and all simulations.")
 @click.option("--associations-df-name", type=click.Path(), show_default=True, default="associations_df.csv",
               help="The name of the output file following simgrids energy consumption")
-def schedule(plan_algo, trace_route, job_file, node_file, forecast_file, update_forecasts, associations_df_path,
+def schedule(plan_algo, trace_route, job_file, nodes_config, forecast_file,
+             update_forecasts,
+             associations_df_path,
              associations_df_name):
     """Schedule a job using the given file paths."""
+    click.secho("\n⚙️ Scheduling Parameters:", fg="cyan", bold=True)
+    click.echo(f"  • Plan Algorithm: {click.style(plan_algo, fg='yellow')}")
+    click.echo(f"  • Trace Route: {click.style(trace_route, fg='yellow')}")
+    click.echo(f"  • Job File: {click.style(job_file, fg='yellow')}")
+    click.echo(f"  • Nodes Config: {click.style(nodes_config, fg='yellow')}")
+    click.echo(f"  • Forecast File: {click.style(forecast_file, fg='yellow')}")
+    click.echo(f"  • Update Forecasts: {click.style(str(update_forecasts), fg='yellow')}")
 
-    click.echo(f"Trace Route File: {trace_route}, Job File: {job_file}, Node File: {node_file}")
-    scheduler_algo = Scheduler(node_file_path=node_file, ip_list_file_path=trace_route, job_file_path=job_file,
+    if associations_df_path:
+        click.echo(f"  • Associations DF Path: {click.style(associations_df_path, fg='yellow')}")
+    if associations_df_name:
+        click.echo(f"  • Associations DF Name: {click.style(associations_df_name, fg='yellow')}")
+
+    # Rest of your scheduling logic...
+    click.secho("\n✅ Starting scheduler...", fg="green")
+
+    scheduler_algo = Scheduler(node_file_path=nodes_config, ip_list_file_path=trace_route, job_file_path=job_file,
                                update_forecasts=update_forecasts)
     if associations_df_path is not None:
         path = Path(associations_df_path)

@@ -6,12 +6,13 @@ from .output import OutputFormatter
 
 
 class MixedIntegerLinearProgrammingGreenPlanner:
-    def __init__(self, associations_df, job_list, node_list, optimize_mode='both'):
+    def __init__(self, associations_df, job_list, node_list, mode='both'):
         self.associations_df = associations_df
-        self.node_list = node_list
+        self.node_list = self.associations_df['node'].unique()
+        click.secho(f"Node list {self.node_list}")
         self.job_list = job_list
         self.time_slots = sorted(associations_df['forecast_id'].unique())
-        self.optimize_mode = optimize_mode.lower()
+        self.optimize_mode = mode.lower()
         self.max_slot = max(self.time_slots)
 
         # Initialize output formatter
@@ -43,7 +44,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         # Decision variables: x[j,t,n] = fraction of job j allocated to slot t on node n
         self.x = pulp.LpVariable.dicts(
             "allocation",
-            [(j['id'], t, n['name']) for j in self.job_list
+            [(j['id'], t, n) for j in self.job_list
              for t in self.time_slots
              for n in self.node_list],
             lowBound=0, upBound=1, cat='Continuous'
@@ -53,23 +54,23 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         # Objective function
         if self.optimize_mode == 'time':
             obj = pulp.lpSum(
-                self.x[j['id'], t, n['name']] * self.metrics[(j['id'], t, n['name'])]['carbon']
+                self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['carbon']
                 for j in self.job_list
                 for t in self.time_slots
                 for n in self.node_list
             )
         elif self.optimize_mode == 'space':
             obj = pulp.lpSum(
-                self.x[j['id'], t, n['name']] * (1 / self.metrics[(j['id'], t, n['name'])]['throughput'])
+                self.x[j['id'], t, n] * (1 / self.metrics[(j['id'], t, n)]['throughput'])
                 for j in self.job_list
                 for t in self.time_slots
                 for n in self.node_list
             )
         else:  # both
             obj = pulp.lpSum(
-                self.x[j['id'], t, n['name']] * (
-                        0.7 * self.metrics[(j['id'], t, n['name'])]['carbon'] +
-                        0.3 * (1 / self.metrics[(j['id'], t, n['name'])]['throughput'])
+                self.x[j['id'], t, n] * (
+                        0.7 * self.metrics[(j['id'], t, n)]['carbon'] +
+                        0.3 * (1 / self.metrics[(j['id'], t, n)]['throughput'])
                 )
                 for j in self.job_list
                 for t in self.time_slots
@@ -82,7 +83,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         # 1. Each job must complete its required time
         for j in self.job_list:
             self.problem += pulp.lpSum(
-                self.x[j['id'], t, n['name']] * self.metrics[(j['id'], t, n['name'])]['per_slot_time']
+                self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['per_slot_time']
                 for t in self.time_slots
                 for n in self.node_list
             ) >= self.job_requirements[j['id']]
@@ -91,7 +92,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         for t in self.time_slots:
             for n in self.node_list:
                 self.problem += pulp.lpSum(
-                    self.x[j['id'], t, n['name']] * self.metrics[(j['id'], t, n['name'])]['per_slot_time']
+                    self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['per_slot_time']
                     for j in self.job_list
                 ) <= 3600  # 1 hour capacity
 
@@ -113,7 +114,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         # Binary variables indicating if job j uses node n at all
         self.y = pulp.LpVariable.dicts(
             "node_usage",
-            [(j['id'], n['name']) for j in self.job_list for n in self.node_list],
+            [(j['id'], n) for j in self.job_list for n in self.node_list],
             cat='Binary'
         )
 
@@ -121,13 +122,13 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         for j in self.job_list:
             for n in self.node_list:
                 self.problem += pulp.lpSum(
-                    self.x[j['id'], t, n['name']] for t in self.time_slots
-                ) <= self.y[j['id'], n['name']] * len(self.time_slots)
+                    self.x[j['id'], t, n] for t in self.time_slots
+                ) <= self.y[j['id'], n] * len(self.time_slots)
 
         # Limit number of nodes per job (e.g., max 2 nodes)
         for j in self.job_list:
             self.problem += pulp.lpSum(
-                self.y[j['id'], n['name']] for n in self.node_list
+                self.y[j['id'], n] for n in self.node_list
             ) <= 2
 
     def _generate_migratable_schedule(self, status):
@@ -137,22 +138,22 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         for t in sorted(self.time_slots):
             for j in self.job_list:
                 for n in self.node_list:
-                    alloc = pulp.value(self.x[j['id'], t, n['name']])
+                    alloc = pulp.value(self.x[j['id'], t, n])
                     if alloc > 0.01 and job_remaining[j['id']] > 0:
                         time_alloc = min(
-                            alloc * self.metrics[(j['id'], t, n['name'])]['per_slot_time'],
+                            alloc * self.metrics[(j['id'], t, n)]['per_slot_time'],
                             job_remaining[j['id']]
                         )
 
                         if time_alloc > 0:
                             schedule.append({
                                 'job_id': j['id'],
-                                'node': n['name'],
+                                'node': n,
                                 'forecast_id': t,
                                 'allocated_time': time_alloc,
                                 'carbon_emissions': time_alloc * (
-                                            self.metrics[(j['id'], t, n['name'])]['carbon'] / 3600),
-                                'throughput': self.metrics[(j['id'], t, n['name'])]['throughput']
+                                            self.metrics[(j['id'], t, n)]['carbon'] / 3600),
+                                'throughput': self.metrics[(j['id'], t, n)]['throughput']
                             })
                             job_remaining[j['id']] -= time_alloc
 
