@@ -1,0 +1,2 @@
+idx,job_id,node,forecast_id,allocated_time,carbon_emissions,throughput,transfer_time,deadline,extendable
+0,1,jgoldverg@gmail.com-cali,0,106.60601955451219,25.917420212418303,7504266675.963134,106.60601955451219,2025-04-04T12:55:25.939278,True

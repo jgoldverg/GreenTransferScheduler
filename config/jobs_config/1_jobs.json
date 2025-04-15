@@ -1,9 +1,9 @@
 [
   {
-    "bytes": 5356,
-    "files_count": 2387,
+    "bytes": 100000000000,
+    "files_count": 0,
     "id": 1,
     "deadline": "2025-04-04T12:55:25.939278",
-    "extendable": false
+    "extendable": true
   }
 ]
