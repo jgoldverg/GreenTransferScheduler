@@ -23,11 +23,8 @@ class SimGridSimulator:
                 self.destination_node = key
                 click.secho(f"destination node: {self.destination_node}")
 
-
-
     def create_xml_for_traceroute(self):
         for node_id, traceroute in self.traceroute_data.items():
-            node = self.node_map[node_id]
             node_network_file_path = f'../config/simgrid_configs/{node_id}_network.xml'
             self.node_network_xml_paths.append(f'{node_id}_network.xml')
 
@@ -37,29 +34,47 @@ class SimGridSimulator:
 
             trace_route = self.traceroute_data[node_id]
             routers = {}
+            link_map = {}
             links = []
 
-            # Create the first router (source) and last router (destination)
-            source_router = node_id
+            # Find source and destination nodes based on type
+            source_node = node_id
+            destination_node = None
+
+            # Find the destination node in our node_map
+            for n_id, n_data in self.node_map.items():
+                if n_data.get('type') == 'destination':
+                    destination_node = n_id
+                    break
+
+            if not destination_node:
+                raise ValueError("No destination node found in node_map")
 
             # Create routers with energy properties
             for i, hop in enumerate(trace_route):
                 if i == 0:
-                    # First node should be named based on the provided node_name (source)
-                    router_id = source_router
-                    cores = str(node['CPU'])  # Source has the node's CPU cores
-                    speed = str(float(node['gf']) * 1000000000) + "f"
+                    # First node is always our source node
+                    router_id = source_node
+                    node_data = self.node_map[source_node]
+                    cores = str(node_data['CPU'])
+                    speed = str(float(node_data['gf']) * 1000000000) + "f"
+                    is_source = True
+                    is_destination = False
                 elif i == len(trace_route) - 1:
-                    # Last node should be named "destination"
-                    destination_node = self.node_map[self.destination_node]
-                    router_id = self.destination_node
-                    cores = str(destination_node['CPU'])  # Set default cores for destination
-                    speed = str(float(destination_node['gf']) * 1000000000) + "f"
+                    # Last node is our destination node
+                    router_id = destination_node
+                    node_data = self.node_map[destination_node]
+                    cores = str(node_data['CPU'])
+                    speed = str(float(node_data['gf']) * 1000000000) + "f"
+                    is_source = False
+                    is_destination = True
                 else:
-                    # Intermediate routers (router1, router2, etc.)
+                    # Intermediate routers
                     router_id = f"router{i}"
-                    cores = "4"  # Set default cores for routers
-                    speed = str(50 * 1000000000) + "f"
+                    cores = "4"  # Default cores for routers
+                    speed = str(50 * 1000000000) + "f"  # 50 GF default for routers
+                    is_source = False
+                    is_destination = False
 
                 # Create the router element
                 router_element = ET.SubElement(
@@ -67,18 +82,20 @@ class SimGridSimulator:
                 )
 
                 # Add energy consumption properties
-                if i == 0 or i == len(trace_route) - 1:
-                    pwr_min = int(node['power']['min'])
-                    pwr_max = int(node['power']['max'])
+                if is_source or is_destination:
+                    node_data = self.node_map[router_id]
+                    pwr_min = int(node_data['power']['min'])
+                    pwr_max = int(node_data['power']['max'])
                     avg = (pwr_max + pwr_min) / 2
                     power_profile = f"{pwr_min}:{avg}:{pwr_max}"
                 else:
-                    power_profile = "50.0:275.0:500.0"
+                    power_profile = "50.0:275.0:500.0"  # Default for routers
+
                 ET.SubElement(router_element, "prop", id="wattage_per_state", value=power_profile)
                 ET.SubElement(router_element, "prop", id="wattage_off", value="5")
 
                 # Mark as router (for intermediate nodes)
-                if i != 0 and i != len(trace_route) - 1:
+                if not is_source and not is_destination:
                     ET.SubElement(router_element, "prop", id="is_router", value="true")
 
                 # Store the router IP mapping
@@ -88,15 +105,24 @@ class SimGridSimulator:
                     prev_ip = trace_route[i - 1].ip
                     link_id = f"link{i}"
                     links.append((routers[prev_ip], router_id, link_id))
+                    link_map[hop.ip] = link_id
+
+                    # Determine bandwidth based on node type
+                    if i == 1:  # Link from source to first router
+                        bandwidth = self.node_map[source_node]['NIC_SPEED']
+                    elif i == len(trace_route) - 1:  # Link to destination
+                        bandwidth = self.node_map[destination_node]['NIC_SPEED']
+                    else:  # Intermediate links
+                        bandwidth = "10Gbps"  # Default for router-to-router links
 
                     link_element = ET.SubElement(
-                        zone, "link", id=link_id, bandwidth="10Gbps", latency=f"{hop.rtt}ms", sharing_policy="SHARED"
+                        zone, "link", id=link_id, bandwidth=bandwidth, latency=f"{hop.rtt}ms", sharing_policy="SHARED"
                     )
                     ET.SubElement(link_element, "prop", id="wattage_range", value="80.0:130.0")
                     ET.SubElement(link_element, "prop", id="wattage_off", value="10")
 
             # Define the route from source to destination
-            route = ET.SubElement(zone, "route", src=source_router, dst=self.destination_node)
+            route = ET.SubElement(zone, "route", src=source_node, dst=destination_node)
             for src, dst, link_id in links:
                 ET.SubElement(route, "link_ctn", id=link_id)
 
@@ -108,20 +134,17 @@ class SimGridSimulator:
                 f.write(xml_string)
 
             print(f"SimGrid XML file generated: {node_network_file_path}")
+            return routers, link_map
 
     def run_simulation(self, node_name="jgoldverg@gmail.com-ccuc", flows=1, job_size=1000000000000, job_id=1):
         xml_file_path = "/workspace/config/simgrid_configs/" + node_name + "_network.xml"
-        params = ["/workspace/simgrid_environment/run.sh", xml_file_path, str(flows), str(job_size), str(job_id)]
+        params = ["/workspace/simgrid_environment/run.sh", xml_file_path, str(flows), str(job_size), str(job_id),
+                  str(self.destination_node)]
         # click.secho(f"Running Simgrid with parameters: {params}")
         result = subprocess.run(params, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         # result = subprocess.run(params)
-        # print(result.stdout)
-        # print(result.stderr)
 
     def parse_simulation_output(self, node_name, job_id):
         file_path = "/workspace/data/energy_consumption_" + str(node_name) + "_" + str(job_id) + "_.json"
         with open(file_path, 'r') as file:
             return json.load(file)
-        # with open(file_path, 'r') as file:
-        #     data = json.load(file)
-        #     return pd.read_json(data)

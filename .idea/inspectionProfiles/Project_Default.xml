@@ -1,0 +1,48 @@
+<component name="InspectionProjectProfileManager">
+  <profile version="1.0">
+    <option name="myName" value="Project Default" />
+    <inspection_tool class="PyPackageRequirementsInspection" enabled="false" level="WARNING" enabled_by_default="false">
+      <option name="ignoredPackages">
+        <value>
+          <list size="19">
+            <item index="0" class="java.lang.String" itemvalue="influxdb-client" />
+            <item index="1" class="java.lang.String" itemvalue="setuptools" />
+            <item index="2" class="java.lang.String" itemvalue="ipping" />
+            <item index="3" class="java.lang.String" itemvalue="tcp-latency" />
+            <item index="4" class="java.lang.String" itemvalue="pyping" />
+            <item index="5" class="java.lang.String" itemvalue="py-cpuinfo" />
+            <item index="6" class="java.lang.String" itemvalue="fabrictestbed-extensions" />
+            <item index="7" class="java.lang.String" itemvalue="fabrictestbed" />
+            <item index="8" class="java.lang.String" itemvalue="pandas" />
+            <item index="9" class="java.lang.String" itemvalue="tabulate" />
+            <item index="10" class="java.lang.String" itemvalue="pytimeparse" />
+            <item index="11" class="java.lang.String" itemvalue="python-dateutil" />
+            <item index="12" class="java.lang.String" itemvalue="plotext" />
+            <item index="13" class="java.lang.String" itemvalue="rich" />
+            <item index="14" class="java.lang.String" itemvalue="requests" />
+            <item index="15" class="java.lang.String" itemvalue="pprintpp" />
+            <item index="16" class="java.lang.String" itemvalue="click" />
+            <item index="17" class="java.lang.String" itemvalue="basemap" />
+            <item index="18" class="java.lang.String" itemvalue="scapy" />
+          </list>
+        </value>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyPep8Inspection" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <option name="ignoredErrors">
+        <list>
+          <option value="E265" />
+        </list>
+      </option>
+    </inspection_tool>
+    <inspection_tool class="PyPep8NamingInspection" enabled="true" level="WEAK WARNING" enabled_by_default="true">
+      <option name="ignoredErrors">
+        <list>
+          <option value="N806" />
+          <option value="N802" />
+          <option value="N803" />
+        </list>
+      </option>
+    </inspection_tool>
+  </profile>
+</component>

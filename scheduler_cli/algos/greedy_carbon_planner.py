@@ -40,18 +40,11 @@ class CarbonAwarePlanner:
             self._allocate_job(idx, job, schedule)
         schedule_df = pd.DataFrame(schedule)
 
-        if self.mode == 'max':
-            return self.output_formatter.format_output(
-                schedule_df=schedule_df,
-                filename='worst_case.csv',
-                optimization_mode=f'greedy_{self.mode}'  # Indicates this is a green-optimized planner
-            )
-        else:
-            return self.output_formatter.format_output(
-                schedule_df=schedule_df,
-                filename='green_case.csv',
-                optimization_mode=f'greedy_{self.mode}'  # Indicates this is a green-optimized planner
-            )
+        return self.output_formatter.format_output(
+            schedule_df=schedule_df,
+            filename=f'carbon_aware_{self.mode}_case.csv',
+            optimization_mode=f'greedy_{self.mode}'
+        )
 
     def _allocate_job(self, idx: int, job: Dict, schedule: List):
         job_df = self.df[self.df['job_id'] == job['id']]

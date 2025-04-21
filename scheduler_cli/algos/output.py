@@ -1,11 +1,10 @@
 import os
 from collections import defaultdict
 
-import click
 from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
 from rich.box import ROUNDED
+from rich.panel import Panel
+from rich.table import Table
 
 
 class OutputFormatter:
@@ -18,12 +17,9 @@ class OutputFormatter:
         self.associations_df = associations_df
         self.console = Console()
 
-        # Calculate job requirements
+        # Calculate job requirements (total bytes needed for each job)
         self.job_requirements = {
-            j['id']: max(
-                row.transfer_time
-                for _, row in associations_df[associations_df['job_id'] == j['id']].iterrows()
-            )
+            j['id']: j['bytes']  # Using the 'size' field from job_list as total bytes needed
             for j in job_list
         }
         os.makedirs(self.output_dir, exist_ok=True)
@@ -54,42 +50,47 @@ class OutputFormatter:
     def calculate_metrics(self, schedule_df):
         metrics = {
             'job_metrics': defaultdict(dict),
-            'node_utilization': defaultdict(lambda: {'total_time': 0, 'total_carbon': 0}),
+            'node_utilization': defaultdict(lambda: {'total_time': 0, 'total_carbon': 0, 'total_bytes': 0}),
             'unscheduled_jobs': [],
             'partially_scheduled_jobs': []
         }
 
-        scheduled_time = defaultdict(float)
+        scheduled_bytes = defaultdict(float)
         for _, row in schedule_df.iterrows():
-            scheduled_time[row['job_id']] += row['allocated_time']
+            # Calculate bytes transferred in this allocation: throughput * allocated_time
+            bytes_transferred = row['throughput'] * row['allocated_time']
+            scheduled_bytes[row['job_id']] += bytes_transferred
+
             metrics['node_utilization'][row['node']]['total_time'] += row['allocated_time']
             metrics['node_utilization'][row['node']]['total_carbon'] += row['carbon_emissions']
+            metrics['node_utilization'][row['node']]['total_bytes'] += bytes_transferred
 
         for job in self.job_list:
             job_id = job['id']
-            job_time = scheduled_time.get(job_id, 0)
-            required_time = self.job_requirements.get(job_id, 0)
+            job_bytes = scheduled_bytes.get(job_id, 0)
+            required_bytes = self.job_requirements.get(job_id, 0)
 
-            # Skip jobs with no requirements (shouldn't happen with our calculation)
-            if required_time <= 0:
+            # Skip jobs with no requirements
+            if required_bytes <= 0:
                 continue
 
-            completion_pct = (job_time / required_time) * 100 if required_time > 0 else 0
+            completion_pct = (job_bytes / required_bytes) * 100 if required_bytes > 0 else 0
 
-            if job_time == 0:
+            if job_bytes == 0:
                 metrics['unscheduled_jobs'].append(job_id)
             elif completion_pct < 99.99:  # Account for floating point precision
                 metrics['partially_scheduled_jobs'].append({
                     'job_id': job_id,
-                    'scheduled_time': job_time,
-                    'required_time': required_time,
+                    'scheduled_bytes': job_bytes,
+                    'required_bytes': required_bytes,
                     'completion_percentage': completion_pct
                 })
 
-            if job_time > 0:
+            if job_bytes > 0:
                 job_df = schedule_df[schedule_df['job_id'] == job_id]
                 metrics['job_metrics'][job_id] = {
-                    'total_time': job_time,
+                    'total_bytes': job_bytes,
+                    'total_time': job_df['allocated_time'].sum(),
                     'total_carbon': job_df['carbon_emissions'].sum(),
                     'nodes_used': job_df['node'].nunique(),
                     'completion_percentage': completion_pct
@@ -100,6 +101,7 @@ class OutputFormatter:
     def generate_summary_stats(self, metrics, optimization_mode=None):
         total_carbon = sum(job['total_carbon'] for job in metrics['job_metrics'].values())
         total_time = sum(job['total_time'] for job in metrics['job_metrics'].values())
+        total_bytes = sum(job['total_bytes'] for job in metrics['job_metrics'].values())
 
         return {
             'total_jobs': len(self.job_list),
@@ -108,57 +110,12 @@ class OutputFormatter:
             'partially_scheduled_jobs': len(metrics['partially_scheduled_jobs']),
             'total_carbon': total_carbon,
             'total_time': total_time,
+            'total_bytes': total_bytes,
             'avg_carbon_per_job': total_carbon / len(metrics['job_metrics']) if metrics['job_metrics'] else 0,
             'avg_time_per_job': total_time / len(metrics['job_metrics']) if metrics['job_metrics'] else 0,
+            'avg_bytes_per_job': total_bytes / len(metrics['job_metrics']) if metrics['job_metrics'] else 0,
             'optimization_mode': optimization_mode
         }
-
-    def print_summary(self, summary_stats, metrics):
-        click.secho(f"\nScheduling Results ({summary_stats['optimization_mode'].upper()})", fg='yellow')
-        click.secho("=" * 50, fg='cyan')
-
-        click.secho("\nSCHEDULING COMPLETION", fg='cyan')
-        click.secho(f"Total jobs: {summary_stats['total_jobs']}")
-        click.secho(f"Fully scheduled: {summary_stats['scheduled_jobs']}", fg='green')
-
-        if summary_stats['partially_scheduled_jobs'] > 0:
-            click.secho(f"Partially scheduled: {summary_stats['partially_scheduled_jobs']}", fg='yellow')
-
-        if summary_stats['unscheduled_jobs'] > 0:
-            click.secho(f"Unscheduled: {summary_stats['unscheduled_jobs']}", fg='red')
-
-        if metrics['partially_scheduled_jobs']:
-            click.secho("\nPARTIALLY SCHEDULED JOBS", fg='yellow')
-            for job in metrics['partially_scheduled_jobs']:
-                click.secho(
-                    f"Job {job['job_id']}: {job['scheduled_time']:.1f}/{job['required_time']:.1f}s "
-                    f"({job['completion_percentage']:.1f}%)",
-                    fg='yellow'
-                )
-
-        if metrics['unscheduled_jobs']:
-            click.secho("\nUNSCHEDULED JOB IDS", fg='red')
-            click.secho(", ".join(str(job_id) for job_id in metrics['unscheduled_jobs']), fg='red')
-
-        click.secho("\nPERFORMANCE METRICS", fg='cyan')
-        click.secho(f"Total carbon emissions: {summary_stats['total_carbon']:.2f} gCO2")
-        click.secho(f"Average per job: {summary_stats['avg_carbon_per_job']:.2f} gCO2")
-        click.secho(f"Total transfer time: {summary_stats['total_time']:.1f} seconds")
-        click.secho(f"Average per job: {summary_stats['avg_time_per_job']:.1f} seconds")
-
-        click.secho("\nNODE UTILIZATION", fg='cyan')
-        for node in self.node_list:
-            node_name = node['name']
-            stats = metrics['node_utilization'].get(node_name, {'total_time': 0, 'total_carbon': 0})
-            time_pct = (stats['total_time'] / summary_stats['total_time']) * 100 if summary_stats[
-                                                                                        'total_time'] > 0 else 0
-            carbon_pct = (stats['total_carbon'] / summary_stats['total_carbon']) * 100 if summary_stats[
-                                                                                              'total_carbon'] > 0 else 0
-
-            click.secho(
-                f"{node_name}: {stats['total_time']:.1f}s ({time_pct:.1f}%) | "
-                f"Carbon: {stats['total_carbon']:.2f}g ({carbon_pct:.1f}%)"
-            )
 
     def print_summary(self, summary_stats, metrics):
         # Header Panel
@@ -185,16 +142,16 @@ class OutputFormatter:
         if metrics['partially_scheduled_jobs']:
             partial_table = Table(title="Partially Scheduled Jobs", box=ROUNDED)
             partial_table.add_column("Job ID", style="cyan")
-            partial_table.add_column("Scheduled", justify="right")
-            partial_table.add_column("Required", justify="right")
+            partial_table.add_column("Scheduled (GB)", justify="right")
+            partial_table.add_column("Required (GB)", justify="right")
             partial_table.add_column("Completion", justify="right")
 
             for job in metrics['partially_scheduled_jobs']:
                 style = self._get_completion_style(job['completion_percentage'])
                 partial_table.add_row(
                     str(job['job_id']),
-                    f"{job['scheduled_time']:.1f}s",
-                    f"{job['required_time']:.1f}s",
+                    f"{job['scheduled_bytes'] / 1e9:.2f}",
+                    f"{job['required_bytes'] / 1e9:.2f}",
                     f"[{style}]{job['completion_percentage']:.1f}%[/]"
                 )
             self.console.print(partial_table)
@@ -207,6 +164,7 @@ class OutputFormatter:
 
         carbon_style = self._get_metric_style(summary_stats['avg_carbon_per_job'], [100, 200])
         time_style = self._get_metric_style(summary_stats['avg_time_per_job'], [500, 1000])
+        bytes_style = self._get_metric_style(summary_stats['avg_bytes_per_job'] / 1e9, [10, 50])  # Thresholds in GB
 
         perf_table.add_row(
             "Carbon Emissions",
@@ -218,6 +176,11 @@ class OutputFormatter:
             f"{summary_stats['total_time']:.1f}s",
             f"[{time_style}]{summary_stats['avg_time_per_job']:.1f}s[/]"
         )
+        perf_table.add_row(
+            "Data Transferred",
+            f"{summary_stats['total_bytes'] / 1e9:.2f} GB",
+            f"[{bytes_style}]{summary_stats['avg_bytes_per_job'] / 1e9:.2f} GB[/]"
+        )
         self.console.print(perf_table)
 
         # Node Utilization Table
@@ -227,10 +190,11 @@ class OutputFormatter:
         node_table.add_column("Time %", justify="right")
         node_table.add_column("Carbon", justify="right")
         node_table.add_column("Carbon %", justify="right")
+        node_table.add_column("Data (GB)", justify="right")
 
         for node in self.node_list:
             node_name = node['name']
-            stats = metrics['node_utilization'].get(node_name, {'total_time': 0, 'total_carbon': 0})
+            stats = metrics['node_utilization'].get(node_name, {'total_time': 0, 'total_carbon': 0, 'total_bytes': 0})
             time_pct = (stats['total_time'] / summary_stats['total_time']) * 100 if summary_stats[
                                                                                         'total_time'] > 0 else 0
             carbon_pct = (stats['total_carbon'] / summary_stats['total_carbon']) * 100 if summary_stats[
@@ -241,7 +205,8 @@ class OutputFormatter:
                 f"{stats['total_time']:.1f}s",
                 f"{time_pct:.1f}%",
                 f"{stats['total_carbon']:.2f}g",
-                f"{carbon_pct:.1f}%"
+                f"{carbon_pct:.1f}%",
+                f"{stats['total_bytes'] / 1e9:.2f}"
             )
         self.console.print(node_table)
 
@@ -263,6 +228,7 @@ class OutputFormatter:
         comp_table.add_column("Avg Carbon", justify="right")
         comp_table.add_column("Total Time", justify="right")
         comp_table.add_column("Avg Time", justify="right")
+        comp_table.add_column("Total Data (GB)", justify="right")
 
         # Rows
         for algo_name, result in algorithm_results.items():
@@ -273,6 +239,7 @@ class OutputFormatter:
                                                                                                'unscheduled_jobs'] < 3 else "red"
             carbon_style = self._get_metric_style(summary['avg_carbon_per_job'], [100, 200])
             time_style = self._get_metric_style(summary['avg_time_per_job'], [500, 1000])
+            bytes_style = self._get_metric_style(summary['avg_bytes_per_job'] / 1e9, [10, 50])
 
             comp_table.add_row(
                 algo_name.upper(),
@@ -282,7 +249,8 @@ class OutputFormatter:
                 f"{summary['total_carbon']:.2f}g",
                 f"[{carbon_style}]{summary['avg_carbon_per_job']:.2f}g[/]",
                 f"{summary['total_time']:.1f}s",
-                f"[{time_style}]{summary['avg_time_per_job']:.1f}s[/]"
+                f"[{time_style}]{summary['avg_time_per_job']:.1f}s[/]",
+                f"[{bytes_style}]{summary['total_bytes'] / 1e9:.2f}[/]"
             )
 
         self.console.print(comp_table)

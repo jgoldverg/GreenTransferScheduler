@@ -224,3 +224,21 @@ def read_in_job_file(job_file_path):
     with open(job_file_path, 'r') as f:
         job_list = json.load(f)
     return job_list
+
+
+def get_unique_ips(pmeter_data: Dict[str, List[IpToLonAndLat]]) -> List[IpToLonAndLat]:
+    unique_ips = set()
+    for node_id, ip_objects in pmeter_data.items():
+        for ip_object in ip_objects:
+            unique_ips.add(IpToLonAndLat(ip=ip_object.ip, lat=ip_object.lat, lon=ip_object.lon, rtt=ip_object.rtt,
+                                         ttl=ip_object.ttl, node_id=ip_object.node_id))
+
+    return list(unique_ips)
+
+
+def carbon_emissions_formula(joules, ci):
+    kwh = joules / 3600000
+    return kwh * ci
+
+
+

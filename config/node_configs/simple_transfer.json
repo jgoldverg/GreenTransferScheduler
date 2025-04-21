@@ -2,7 +2,7 @@
   {
     "name": "jgoldverg@gmail.com-cali",
     "total_ram": 8,
-    "NIC_SPEED": "1Gbps",
+    "NIC_SPEED": "5Gbps",
     "CPU": 2,
     "power": {
       "min": 1,

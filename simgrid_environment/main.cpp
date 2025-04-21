@@ -140,8 +140,13 @@ int main(int argc, char *argv[]) {
         job_id = argv[4];
     }
 
+    std::string destination_node = "";
+    if(argc > 5) {
+        destination_node = argv[5];
+    }
+
     sg4::Actor::create("sender", e.host_by_name(node_name), sender, argSender);
-    sg4::Actor::create("receiver", e.host_by_name("destination"), receiver, argReceiver);
+    sg4::Actor::create("receiver", e.host_by_name(destination_node), receiver, argReceiver);
 
     /* And now, launch the simulation */
     double start_time = sg4::Engine::get_clock();

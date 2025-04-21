@@ -1,65 +1,56 @@
 [
   {
-    "bytes": 3143242629675,
-    "files_count": 6371,
+    "bytes": 50000000000,
+    "files_count": 1,
     "id": 1,
-    "deadline": "2025-04-03T13:56:42.498813",
-    "extendable": false
+    "deadline": 15
   },
   {
-    "bytes": 36530115211,
-    "files_count": 5433,
+    "bytes": 50000000000,
+    "files_count": 2,
     "id": 2,
-    "deadline": "2025-04-08T04:56:42.498829",
-    "extendable": true
+    "deadline": 5
   },
   {
-    "bytes": 42639933,
+    "bytes": 70000000000,
     "files_count": 9385,
     "id": 3,
-    "deadline": "2025-04-03T14:56:42.498835",
-    "extendable": true
+    "deadline": 3
   },
   {
-    "bytes": 24984027,
+    "bytes": 80000000000,
     "files_count": 616,
     "id": 4,
-    "deadline": "2025-04-07T18:56:42.498839",
-    "extendable": true
+    "deadline": 10
   },
   {
-    "bytes": 216397644606,
+    "bytes": 1000000000000,
     "files_count": 7229,
     "id": 5,
-    "deadline": "2025-04-03T09:56:42.498842",
-    "extendable": false
+    "deadline": 25
   },
   {
-    "bytes": 11184509,
+    "bytes": 20000000000,
     "files_count": 2755,
     "id": 6,
-    "deadline": "2025-04-04T05:56:42.498845",
-    "extendable": false
+    "deadline": 8
   },
   {
-    "bytes": 82839653726,
+    "bytes": 70000000000,
     "files_count": 4932,
     "id": 7,
-    "deadline": "2025-04-03T23:56:42.498848",
-    "extendable": true
+    "deadline": 12
   },
   {
-    "bytes": 2246000,
+    "bytes": 30000000000,
     "files_count": 6773,
     "id": 8,
-    "deadline": "2025-04-04T09:56:42.498852",
-    "extendable": false
+    "deadline": 6
   },
   {
-    "bytes": 1340,
-    "files_count": 6545,
+    "bytes": 300000000000,
+    "files_count": 6773,
     "id": 9,
-    "deadline": "2025-04-03T15:56:42.498855",
-    "extendable": true
+    "deadline": 25
   }
 ]

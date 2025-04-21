@@ -1,18 +1,16 @@
 import pulp
 import pandas as pd
 import click
-import math
 from .output import OutputFormatter
 
 
 class MixedIntegerLinearProgrammingGreenPlanner:
-    def __init__(self, associations_df, job_list, node_list, mode='both'):
+    def __init__(self, associations_df, job_list, node_list):
         self.associations_df = associations_df
         self.node_list = self.associations_df['node'].unique()
         click.secho(f"Node list {self.node_list}")
         self.job_list = job_list
         self.time_slots = sorted(associations_df['forecast_id'].unique())
-        self.optimize_mode = mode.lower()
         self.max_slot = max(self.time_slots)
 
         # Initialize output formatter
@@ -52,30 +50,16 @@ class MixedIntegerLinearProgrammingGreenPlanner:
 
     def plan(self):
         # Objective function
-        if self.optimize_mode == 'time':
-            obj = pulp.lpSum(
-                self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['carbon']
-                for j in self.job_list
-                for t in self.time_slots
-                for n in self.node_list
+
+        obj = pulp.lpSum(
+            self.x[j['id'], t, n] * (
+                    0.7 * self.metrics[(j['id'], t, n)]['carbon'] +
+                    0.3 * (1 / self.metrics[(j['id'], t, n)]['throughput'])
             )
-        elif self.optimize_mode == 'space':
-            obj = pulp.lpSum(
-                self.x[j['id'], t, n] * (1 / self.metrics[(j['id'], t, n)]['throughput'])
-                for j in self.job_list
-                for t in self.time_slots
-                for n in self.node_list
-            )
-        else:  # both
-            obj = pulp.lpSum(
-                self.x[j['id'], t, n] * (
-                        0.7 * self.metrics[(j['id'], t, n)]['carbon'] +
-                        0.3 * (1 / self.metrics[(j['id'], t, n)]['throughput'])
-                )
-                for j in self.job_list
-                for t in self.time_slots
-                for n in self.node_list
-            )
+            for j in self.job_list
+            for t in self.time_slots
+            for n in self.node_list
+        )
         self.problem += obj
 
         ### Constraints ###
@@ -152,7 +136,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
                                 'forecast_id': t,
                                 'allocated_time': time_alloc,
                                 'carbon_emissions': time_alloc * (
-                                            self.metrics[(j['id'], t, n)]['carbon'] / 3600),
+                                        self.metrics[(j['id'], t, n)]['carbon'] / 3600),
                                 'throughput': self.metrics[(j['id'], t, n)]['throughput']
                             })
                             job_remaining[j['id']] -= time_alloc
@@ -161,5 +145,5 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         return self.output_formatter.format_output(
             schedule_df,
             filename='milp_green.csv',
-            optimization_mode=f'Milp {self.optimize_mode}'
+            optimization_mode=f'Milp'
         )
