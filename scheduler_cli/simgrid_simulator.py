@@ -145,6 +145,6 @@ class SimGridSimulator:
         # result = subprocess.run(params)
 
     def parse_simulation_output(self, node_name, job_id):
-        file_path = "/workspace/data/energy_consumption_" + str(node_name) + "_" + str(job_id) + "_.json"
+        file_path = f"/workspace/data/energy_consumption_{node_name}_{job_id}_.json"
         with open(file_path, 'r') as file:
             return json.load(file)

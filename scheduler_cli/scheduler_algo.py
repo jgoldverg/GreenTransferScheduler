@@ -1,3 +1,4 @@
+import time
 from enum import Enum
 import click
 import pandas as pd
@@ -61,7 +62,10 @@ class Scheduler:
                     self.node_list,
                     **kwargs
                 )
+                start_time = time.time()
                 planner.plan()
+                total_time = time.time() - start_time
+                click.secho(f"Total time used to run {plan}: {total_time}")
         else:
             # Get the appropriate kwargs for the specific planner
             kwargs = planner_configs.get(plan_algo, {})
@@ -73,7 +77,10 @@ class Scheduler:
                 self.node_list,
                 **kwargs
             )
+            start_time = time.time()
             planner.plan()
+            total_time = time.time() - start_time
+            click.secho(f"Total time used to run {plan_algo}: {total_time}")
 
 
 # Factory function to instantiate correct class

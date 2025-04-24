@@ -1,27 +1,23 @@
 from typing import List, Dict
-
 import pandas as pd
-from itertools import groupby, count
-
 from .output import OutputFormatter
 
 
 class CarbonAwarePlanner:
     def __init__(self, associations_df: pd.DataFrame, jobs: List[Dict], nodes: List[Dict],
-                 mode: str = 'min'):  # 'min' or 'max'
+                 mode: str = 'min'):
         self.df = associations_df
-        self.mode = mode
+        self.mode = mode.lower()
         self.job_list = jobs
         self.node_list = nodes
-        self.reverse_sort = (mode == 'max')  # True for worst-case
-        self.jobs = sorted(jobs,
-                           key=lambda x: self._get_job_emissions(x['id']),
-                           reverse=self.reverse_sort)
+        self.reverse_sort = (self.mode == 'max')
+
+        # Initialize capacity tracking
         self.capacity = {n['name']: {s: 3600 for s in associations_df['forecast_id'].unique()}
                          for n in nodes}
-
         self.time_slots = sorted(associations_df['forecast_id'].unique())
 
+        # Initialize output formatter
         self.output_formatter = OutputFormatter(
             associations_df=self.df,
             job_list=self.job_list,
@@ -29,77 +25,92 @@ class CarbonAwarePlanner:
             time_slots=self.time_slots
         )
 
+        # Sort jobs by deadline then carbon priority
+        self.jobs = sorted(
+            jobs,
+            key=lambda x: (x.get('deadline', float('inf')),
+                           self._get_job_emissions(x['id'])),
+            reverse=self.reverse_sort
+        )
+
     def _get_job_emissions(self, job_id: str) -> float:
-        """Get min/max possible emissions for a job based on mode"""
+        """Get best-case/worst-case emissions for a job"""
         job_emissions = self.df[self.df['job_id'] == job_id]['carbon_emissions']
         return job_emissions.max() if self.reverse_sort else job_emissions.min()
 
     def plan(self) -> pd.DataFrame:
         schedule = []
-        for idx, job in enumerate(self.jobs):
-            self._allocate_job(idx, job, schedule)
-        schedule_df = pd.DataFrame(schedule)
+        unallocated_jobs = []
+
+        for job in self.jobs:
+            if not self._allocate_job(job, schedule):
+                unallocated_jobs.append(job['id'])
 
         return self.output_formatter.format_output(
-            schedule_df=schedule_df,
+            schedule_df=pd.DataFrame(schedule),
             filename=f'carbon_aware_{self.mode}_case.csv',
             optimization_mode=f'greedy_{self.mode}'
         )
 
-    def _allocate_job(self, idx: int, job: Dict, schedule: List):
+    def _allocate_job(self, job: Dict, schedule: List) -> bool:
         job_df = self.df[self.df['job_id'] == job['id']]
+        deadline = job.get('deadline', float('inf'))
 
-        # Pick node with min/max average emissions
-        node_emissions = job_df.groupby('node')['carbon_emissions'].mean()
-        target_node = node_emissions.idxmax() if self.reverse_sort else node_emissions.idxmin()
+        # Get all possible allocations before deadline
+        valid_allocations = job_df[job_df['forecast_id'] <= deadline]
+        if valid_allocations.empty:
+            return False
 
-        # Sort slots by emissions (descending for max, ascending for min)
-        slots_sorted = job_df[job_df['node'] == target_node].sort_values(
-            'carbon_emissions', ascending=not self.reverse_sort)
+        # Sort by carbon preference
+        allocations = valid_allocations.sort_values(
+            'carbon_emissions',
+            ascending=not self.reverse_sort
+        )
 
-        time_needed = slots_sorted['transfer_time'].iloc[0]
-        allocated = False
+        # Try to allocate in the greenest possible slots
+        remaining_time = None
+        allocated_slots = []
 
-        # Try single-slot allocation
-        for _, slot in slots_sorted.iterrows():
-            if self.capacity[target_node][slot['forecast_id']] >= time_needed:
-                self._add_entry(idx, job, target_node, slot, time_needed, schedule)
-                allocated = True
-                break
+        for _, slot in allocations.iterrows():
+            node = slot['node']
+            slot_id = slot['forecast_id']
+            node_specific_time = slot['transfer_time']
 
-        # Multi-slot fallback
-        if not allocated and time_needed > 3600:
-            self._allocate_multislot(idx, job, target_node, slots_sorted, time_needed, schedule)
+            # Initialize remaining_time on first iteration
+            if remaining_time is None:
+                remaining_time = node_specific_time
 
-    def _allocate_multislot(self, idx: int, job: Dict, node: str, slots: pd.DataFrame,
-                            time_needed: float, schedule: List):
-        consecutive_slots = self._find_consecutive(slots['forecast_id'].unique())
-        for seq in consecutive_slots:
-            total_capacity = sum(self.capacity[node][s] for s in seq)
-            if total_capacity >= time_needed:
-                remaining = time_needed
-                for slot_id in seq:
-                    alloc = min(remaining, self.capacity[node][slot_id])
-                    if alloc > 0:
-                        slot = slots[slots['forecast_id'] == slot_id].iloc[0]
-                        self._add_entry(idx, job, node, slot, alloc, schedule)
-                        remaining -= alloc
-                return
+            if self.capacity[node][slot_id] > 0:
+                alloc = min(self.capacity[node][slot_id], remaining_time)
+                self.capacity[node][slot_id] -= alloc
+                allocated_slots.append({
+                    'node': node,
+                    'slot_id': slot_id,
+                    'time_used': alloc,
+                    'slot_data': slot
+                })
+                remaining_time -= alloc
 
-    def _find_consecutive(self, slots: List[int]) -> List[List[int]]:
-        return [list(g) for _, g in groupby(sorted(slots), key=lambda n, c=count(): n - next(c))]
+                if remaining_time <= 0:
+                    # Job fully allocated
+                    for alloc in allocated_slots:
+                        self._add_schedule_entry(job, alloc, schedule)
+                    return True
 
-    def _add_entry(self, idx: int, job: Dict, node: str, slot: pd.Series, alloc: float, schedule: List):
-        self.capacity[node][slot['forecast_id']] -= alloc
+        # If we get here, allocation failed - roll back
+        for alloc in allocated_slots:
+            self.capacity[alloc['node']][alloc['slot_id']] += alloc['time_used']
+        return False
+
+    def _add_schedule_entry(self, job: Dict, allocation: Dict, schedule: List):
+        """Add an allocation to the schedule"""
         schedule.append({
-            'idx': idx,
             'job_id': job['id'],
-            'node': node,
-            'forecast_id': slot['forecast_id'],
-            'allocated_time': alloc,
-            'carbon_emissions': slot['carbon_emissions'],
-            'throughput': slot['throughput'],
-            'transfer_time': slot['transfer_time'],
-            'deadline': job.get('deadline'),
-            'extendable': job.get('extendable', False)
+            'node': allocation['node'],
+            'forecast_id': allocation['slot_id'],
+            'allocated_time': allocation['time_used'],
+            'carbon_emissions': allocation['slot_data']['carbon_emissions'],
+            'throughput': allocation['slot_data']['throughput'],
+            'transfer_time': allocation['slot_data']['transfer_time'],
+            'deadline': job.get('deadline')
         })

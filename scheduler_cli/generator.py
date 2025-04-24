@@ -103,30 +103,9 @@ class DataGenerator:
                 fill_char='=',
                 empty_char=' '
         ) as bar:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-                futures = {}
-                for node_name, job_size, job_id in tasks:
-                    future = executor.submit(
-                        self.simulator.run_simulation,
-                        node_name,
-                        1,  # flows
-                        job_size,
-                        job_id
-                    )
-                    futures[future] = (node_name, job_id)
-
-                for future in concurrent.futures.as_completed(futures):
-                    node_name, job_id = futures[future]
-                    try:
-                        future.result()
-                    except Exception as e:
-                        click.secho(
-                            f"\nError in node={node_name}, job={job_id}: {str(e)}",
-                            fg="red",
-                            err=True
-                        )
-                    finally:
-                        bar.update(1)  # Ensure progress always advances
+            for node_name, job_size, job_id in tasks:
+                self.simulator.run_simulation(node_name=node_name, flows=1, job_size=job_size, job_id=job_id)
+                bar.update(1)
 
     def create_intervals(self, df_path):
         data_list = []  # Collect data here
@@ -247,7 +226,6 @@ class DataGenerator:
                     (self.forecasts_df['node_id'] == node_name) &
                     (self.forecasts_df['ip'] == ip)
                     ]
-                click.secho(f"IP: {ip} node_name:{node_name} link_name:{link_name}")
                 if not ci_hop.empty:
                     ci_value = ci_hop.iloc[0]['ci']  # gCO₂/kWh
                     # Convert energy (J) to kWh

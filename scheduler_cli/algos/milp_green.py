@@ -27,7 +27,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
             for _, row in associations_df.iterrows()
         }
 
-        # Calculate job requirements (assuming each job has 'required_time' or use transfer_time)
+        # Calculate job requirements
         self.job_requirements = {
             j['id']: max(
                 row.transfer_time
@@ -48,96 +48,82 @@ class MixedIntegerLinearProgrammingGreenPlanner:
             lowBound=0, upBound=1, cat='Continuous'
         )
 
-    def plan(self):
-        # Objective function
-
-        obj = pulp.lpSum(
-            self.x[j['id'], t, n] * (
-                    0.7 * self.metrics[(j['id'], t, n)]['carbon'] +
-                    0.3 * (1 / self.metrics[(j['id'], t, n)]['throughput'])
-            )
-            for j in self.job_list
-            for t in self.time_slots
-            for n in self.node_list
+        # Slack variables: unmet job time
+        self.unmet = pulp.LpVariable.dicts(
+            "unmet_time",
+            [j['id'] for j in self.job_list],
+            lowBound=0,
+            cat='Continuous'
         )
-        self.problem += obj
 
-        ### Constraints ###
+    def plan(self):
+        # Penalty for unmet job time (adjustable)
+        PENALTY_PER_SECOND = 1000
 
-        # 1. Each job must complete its required time
+        # Objective function: minimize carbon emissions + penalty for unmet work
+        self.problem += (
+            pulp.lpSum(
+                self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['carbon']
+                for j in self.job_list
+                for t in self.time_slots
+                for n in self.node_list
+            ) +
+            pulp.lpSum(
+                self.unmet[j['id']] * PENALTY_PER_SECOND
+                for j in self.job_list
+            )
+        )
+
+        # 1. Job completion (relaxed with unmet_time)
         for j in self.job_list:
             self.problem += pulp.lpSum(
                 self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['per_slot_time']
                 for t in self.time_slots
                 for n in self.node_list
-            ) >= self.job_requirements[j['id']]
+            ) + self.unmet[j['id']] >= self.job_requirements[j['id']]
 
-        # 2. Node capacity constraint (knapsack-like)
+        # 2. Node capacity constraint
         for t in self.time_slots:
             for n in self.node_list:
                 self.problem += pulp.lpSum(
                     self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['per_slot_time']
                     for j in self.job_list
-                ) <= 3600  # 1 hour capacity
+                ) <= 3600  # 1 hour
 
-        # 3. Optional: Limit migrations (can be commented out for full flexibility)
-        # self._add_migration_constraints()
-
-        # Solve with longer time limit
+        # Solve with time limit
         self.problem.solve(pulp.PULP_CBC_CMD(msg=True, timeLimit=5000))
         status = pulp.LpStatus[self.problem.status]
 
-        if status != "Optimal":
+        if status not in ["Optimal", "Feasible"]:
             click.secho(f"Solver status: {status}", fg='red')
             return None
 
         return self._generate_migratable_schedule(status)
 
-    def _add_migration_constraints(self):
-        """Optional constraints to limit excessive migrations"""
-        # Binary variables indicating if job j uses node n at all
-        self.y = pulp.LpVariable.dicts(
-            "node_usage",
-            [(j['id'], n) for j in self.job_list for n in self.node_list],
-            cat='Binary'
-        )
-
-        # Link x and y variables
-        for j in self.job_list:
-            for n in self.node_list:
-                self.problem += pulp.lpSum(
-                    self.x[j['id'], t, n] for t in self.time_slots
-                ) <= self.y[j['id'], n] * len(self.time_slots)
-
-        # Limit number of nodes per job (e.g., max 2 nodes)
-        for j in self.job_list:
-            self.problem += pulp.lpSum(
-                self.y[j['id'], n] for n in self.node_list
-            ) <= 2
-
     def _generate_migratable_schedule(self, status):
         schedule = []
         job_remaining = {j['id']: self.job_requirements[j['id']] for j in self.job_list}
+        job_dict = {j['id']: j for j in self.job_list}
 
         for t in sorted(self.time_slots):
             for j in self.job_list:
+                job_id = j['id']
                 for n in self.node_list:
                     alloc = pulp.value(self.x[j['id'], t, n])
                     if alloc > 0.01 and job_remaining[j['id']] > 0:
-                        time_alloc = min(
-                            alloc * self.metrics[(j['id'], t, n)]['per_slot_time'],
-                            job_remaining[j['id']]
-                        )
-
+                        per_slot_time = self.metrics[(j['id'], t, n)]['per_slot_time']
+                        time_alloc = min(alloc * per_slot_time, job_remaining[j['id']])
                         if time_alloc > 0:
+                            slot_data = self.metrics[(j['id'], t, n)]
                             schedule.append({
-                                'job_id': j['id'],
+                                'job_id': job_id,
                                 'node': n,
                                 'forecast_id': t,
                                 'allocated_time': time_alloc,
-                                'carbon_emissions': time_alloc * (
-                                        self.metrics[(j['id'], t, n)]['carbon'] / 3600),
-                                'throughput': self.metrics[(j['id'], t, n)]['throughput']
+                                'carbon_emissions': time_alloc * (slot_data['carbon'] / 3600),
+                                'throughput': slot_data.get('throughput'),
+                                'transfer_time': slot_data.get('time'),
+                                'deadline': job_dict[j['id']].get('deadline')
                             })
                             job_remaining[j['id']] -= time_alloc
 
@@ -145,5 +131,6 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         return self.output_formatter.format_output(
             schedule_df,
             filename='milp_green.csv',
-            optimization_mode=f'Milp'
+            optimization_mode='Milp'
         )
+
