@@ -1,29 +1,20 @@
 import pandas as pd
-from .output import OutputFormatter
 import click
 
 
 class WorstCasePlanner:
-    def __init__(self, associations_df, job_list, node_list):
+    def __init__(self, associations_df, job_list):
         self.associations_df = associations_df
-        self.node_list = node_list
+
         self.job_list = job_list
-        self.time_slots = sorted(associations_df['forecast_id'].unique())
         self.slot_duration = 3600  # seconds per time slot
-
-        # Initialize OutputFormatter
-        self.output_formatter = OutputFormatter(
-            associations_df=self.associations_df,
-            job_list=job_list,
-            node_list=node_list,
-            time_slots=self.time_slots
-        )
-
-        # Track remaining capacity per node per slot
+        self.nodes = associations_df['node'].unique()
+        self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
         self.remaining_capacity = {
-            node['name']: {slot: self.slot_duration for slot in self.time_slots}
-            for node in node_list
+            node: {slot: 3600.0 for slot in self.time_slots}
+            for node in self.nodes
         }
+
 
     def plan(self):
         """Generate the worst-case carbon emissions schedule with continuous time allocation."""
@@ -62,13 +53,7 @@ class WorstCasePlanner:
             for job_id in unallocated_jobs:
                 click.secho(f"  - Job {job_id}", fg='red')
 
-        schedule_df = pd.DataFrame(schedule)
-        click.secho(f"Schedule Df: {schedule_df}")
-        return self.output_formatter.format_output(
-            schedule_df=schedule_df,
-            filename='worst_case_schedule.csv',
-            optimization_mode='worst-case'
-        )
+        return pd.DataFrame(schedule)
 
     def _get_max_possible_emissions(self, job_id):
         """Helper to get maximum possible emissions for a job across all options"""

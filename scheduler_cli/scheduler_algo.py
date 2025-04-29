@@ -3,23 +3,14 @@ from enum import Enum
 import click
 import pandas as pd
 
-from models import read_in_node_file, read_in_job_file, read_in_node_list_to_map
+from models import read_in_node_file, read_in_job_file, read_in_node_list_to_map, PlanAlgorithm
 from algos.shortest_job_first import ShortestJobFirst
 from algos.earliest_deadline_first import EarliestDeadlineFirst
 
 from algos.milp_green import MixedIntegerLinearProgrammingGreenPlanner
 from algos.greedy_carbon_planner import CarbonAwarePlanner
 from algos.round_robin import RoundRobin
-
-
-class PlanAlgorithm(Enum):
-    EARLIEST_DEADLINE_FIRST = "edf"
-    SHORTEST_JOB_FIRST = "sjf"
-    WORST_CASE = "worst"
-    BRUTE_FORCE_GREEN_CASE = "green"
-    LINEAR_PROGRAMMING_GREEN = "milp_green"
-    ALL = "all"
-    ROUND_ROBIN = "rr"
+from schedules_visualization import ScheduleVisualization
 
 
 class Scheduler:
@@ -46,7 +37,8 @@ class Scheduler:
                 'mode': 'max',
             },
         }
-
+        schedules_map = {}
+        algo_time = {}
         if plan_algo == PlanAlgorithm.ALL:
             for plan in PlanAlgorithm:
                 if plan == PlanAlgorithm.ALL:
@@ -59,13 +51,13 @@ class Scheduler:
                     plan,
                     self.associations_df,
                     self.job_list,
-                    self.node_list,
                     **kwargs
                 )
                 start_time = time.time()
-                planner.plan()
+                schedules_map[plan] = planner.plan()
                 total_time = time.time() - start_time
                 click.secho(f"Total time used to run {plan}: {total_time}")
+                algo_time[plan] = total_time
         else:
             # Get the appropriate kwargs for the specific planner
             kwargs = planner_configs.get(plan_algo, {})
@@ -78,9 +70,16 @@ class Scheduler:
                 **kwargs
             )
             start_time = time.time()
-            planner.plan()
+            schedules_map[plan_algo] = planner.plan()
             total_time = time.time() - start_time
+            algo_time[plan_algo] = total_time
             click.secho(f"Total time used to run {plan_algo}: {total_time}")
+
+        # schedule_map: Dict, associations_df: pd.DataFrame, job_list : List, node_list: List
+        self.schedule_visualization = ScheduleVisualization(schedules_map, self.associations_df, self.job_list,
+                                                            self.node_list, algo_time)
+        self.schedule_visualization.save_schedules()
+        self.schedule_visualization.visualize()
 
 
 # Factory function to instantiate correct class
@@ -91,6 +90,6 @@ def planner_factory(algo: PlanAlgorithm, *args, **kwargs):
         PlanAlgorithm.LINEAR_PROGRAMMING_GREEN: MixedIntegerLinearProgrammingGreenPlanner,
         PlanAlgorithm.ROUND_ROBIN: RoundRobin,
         PlanAlgorithm.SHORTEST_JOB_FIRST: ShortestJobFirst,
-        PlanAlgorithm.EARLIEST_DEADLINE_FIRST: EarliestDeadlineFirst
+        PlanAlgorithm.EARLIEST_DEADLINE_FIRST: EarliestDeadlineFirst,
     }
     return planners[PlanAlgorithm(algo)](*args, **kwargs)  # Instantiate the selected planner

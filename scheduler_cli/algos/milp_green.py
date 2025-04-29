@@ -1,11 +1,10 @@
-import pulp
-import pandas as pd
 import click
-from .output import OutputFormatter
+import pandas as pd
+import pulp
 
 
 class MixedIntegerLinearProgrammingGreenPlanner:
-    def __init__(self, associations_df, job_list, node_list):
+    def __init__(self, associations_df, job_list):
         self.associations_df = associations_df
         self.node_list = self.associations_df['node'].unique()
         click.secho(f"Node list {self.node_list}")
@@ -13,8 +12,13 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         self.time_slots = sorted(associations_df['forecast_id'].unique())
         self.max_slot = max(self.time_slots)
 
+        # Store deadlines for each job
+        self.job_deadlines = {
+            j['id']: j.get('deadline', self.max_slot)  # Default to max slot if no deadline
+            for j in job_list
+        }
+
         # Initialize output formatter
-        self.output_formatter = OutputFormatter(job_list, node_list, self.time_slots, self.associations_df)
 
         # Precompute metrics
         self.metrics = {
@@ -22,7 +26,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
                 'time': row.transfer_time,
                 'carbon': row.carbon_emissions,
                 'throughput': row.throughput,
-                'per_slot_time': min(3600, row.transfer_time)
+                'per_slot_time': min(3600, row.transfer_time),
             }
             for _, row in associations_df.iterrows()
         }
@@ -40,10 +44,11 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         self.problem = pulp.LpProblem("Green_Job_Scheduler", pulp.LpMinimize)
 
         # Decision variables: x[j,t,n] = fraction of job j allocated to slot t on node n
+        # Only create variables for time slots before the deadline
         self.x = pulp.LpVariable.dicts(
             "allocation",
             [(j['id'], t, n) for j in self.job_list
-             for t in self.time_slots
+             for t in self.time_slots if t <= self.job_deadlines[j['id']]
              for n in self.node_list],
             lowBound=0, upBound=1, cat='Continuous'
         )
@@ -62,23 +67,23 @@ class MixedIntegerLinearProgrammingGreenPlanner:
 
         # Objective function: minimize carbon emissions + penalty for unmet work
         self.problem += (
-            pulp.lpSum(
-                self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['carbon']
-                for j in self.job_list
-                for t in self.time_slots
-                for n in self.node_list
-            ) +
-            pulp.lpSum(
-                self.unmet[j['id']] * PENALTY_PER_SECOND
-                for j in self.job_list
-            )
+                pulp.lpSum(
+                    self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['carbon']
+                    for j in self.job_list
+                    for t in self.time_slots if t <= self.job_deadlines[j['id']]
+                    for n in self.node_list
+                ) +
+                pulp.lpSum(
+                    self.unmet[j['id']] * PENALTY_PER_SECOND
+                    for j in self.job_list
+                )
         )
 
         # 1. Job completion (relaxed with unmet_time)
         for j in self.job_list:
             self.problem += pulp.lpSum(
                 self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['per_slot_time']
-                for t in self.time_slots
+                for t in self.time_slots if t <= self.job_deadlines[j['id']]
                 for n in self.node_list
             ) + self.unmet[j['id']] >= self.job_requirements[j['id']]
 
@@ -87,7 +92,7 @@ class MixedIntegerLinearProgrammingGreenPlanner:
             for n in self.node_list:
                 self.problem += pulp.lpSum(
                     self.x[j['id'], t, n] * self.metrics[(j['id'], t, n)]['per_slot_time']
-                    for j in self.job_list
+                    for j in self.job_list if t <= self.job_deadlines[j['id']]
                 ) <= 3600  # 1 hour
 
         # Solve with time limit
@@ -108,7 +113,15 @@ class MixedIntegerLinearProgrammingGreenPlanner:
         for t in sorted(self.time_slots):
             for j in self.job_list:
                 job_id = j['id']
+                # Skip time slots after deadline
+                if t > self.job_deadlines[job_id]:
+                    continue
+
                 for n in self.node_list:
+                    # Skip if variable doesn't exist (for slots after deadline)
+                    if (j['id'], t, n) not in self.x:
+                        continue
+
                     alloc = pulp.value(self.x[j['id'], t, n])
                     if alloc > 0.01 and job_remaining[j['id']] > 0:
                         per_slot_time = self.metrics[(j['id'], t, n)]['per_slot_time']
@@ -121,16 +134,11 @@ class MixedIntegerLinearProgrammingGreenPlanner:
                                 'forecast_id': t,
                                 'allocated_time': time_alloc,
                                 'carbon_emissions': time_alloc * (slot_data['carbon'] / 3600),
+                                'bytes': slot_data.get('bytes'),
                                 'throughput': slot_data.get('throughput'),
                                 'transfer_time': slot_data.get('time'),
-                                'deadline': job_dict[j['id']].get('deadline')
+                                'deadline': self.job_deadlines[job_id]
                             })
                             job_remaining[j['id']] -= time_alloc
 
-        schedule_df = pd.DataFrame(schedule)
-        return self.output_formatter.format_output(
-            schedule_df,
-            filename='milp_green.csv',
-            optimization_mode='Milp'
-        )
-
+        return pd.DataFrame(schedule)

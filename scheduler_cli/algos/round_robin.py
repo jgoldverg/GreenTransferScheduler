@@ -1,39 +1,24 @@
-from collections import defaultdict
 from typing import List, Dict
 import click
 import pandas as pd
-from itertools import count, groupby
-
-from .output import OutputFormatter
 
 
 class RoundRobin:
-    def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict], node_list: List[Dict]):
+    def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict]):
         self.df = associations_df
         self.job_list = job_list
-        self.node_list = node_list
         self.nodes = associations_df['node'].unique()
-        self.time_slots = sorted(pd.to_numeric(associations_df['forecast_id'].unique()))
-
+        self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
+        self.capacity = {
+            node: {slot: 3600.0 for slot in self.time_slots}
+            for node in self.nodes
+        }
         # Precompute transfer times for each job-node pair
         self.transfer_times = self.df.groupby(['job_id', 'node'])['transfer_time'].first().to_dict()
 
-        # Initialize capacity: each node has 3600s per time slot
-        self.capacity = {
-            node: {slot: 3600 for slot in self.time_slots}
-            for node in self.nodes
-        }
 
         # Round-robin state
         self.next_node_idx = 0
-
-        # Output formatter
-        self.output = OutputFormatter(
-            associations_df=self.df,
-            job_list=self.job_list,
-            node_list=self.node_list,
-            time_slots=self.time_slots
-        )
 
     def _get_next_node(self):
         """Get next node in round-robin order"""
@@ -119,7 +104,6 @@ class RoundRobin:
                     remaining_time -= allocate
 
                     schedule.append({
-                        'idx': idx,
                         'job_id': job['id'],
                         'node': node,
                         'forecast_id': slot_time,
@@ -128,7 +112,6 @@ class RoundRobin:
                         'throughput': slot_data['throughput'],
                         'transfer_time': allocate,  # This is the actual allocated time
                         'deadline': job.get('deadline'),
-                        'extendable': job.get('extendable', False)
                     })
 
                     if remaining_time <= 0:
@@ -141,9 +124,4 @@ class RoundRobin:
                 click.secho(f"⚠️ Failed to schedule Job {job_id} (deadline: {deadline})", fg='yellow')
 
         # Format output
-        schedule_df = pd.DataFrame(schedule)
-        return self.output.format_output(
-            schedule_df=schedule_df,
-            filename='round_robin_schedule.csv',
-            optimization_mode='round_robin'
-        )
+        return pd.DataFrame(schedule)

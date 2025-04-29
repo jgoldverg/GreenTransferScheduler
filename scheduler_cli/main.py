@@ -108,7 +108,7 @@ def generate_job_config(num_of_jobs, job_output_path, deadline_end):
 def generate_realistic_jobs(num_of_jobs, deadline_end=25):
     """Generate more realistic HPC file transfer jobs with clustered distributions"""
     job_types = {
-        'small_urgent': {'size_range': (1, 100 * 1024 ** 2),  # 1B-100MB
+        'small_urgent': {'size_range': (1024 ** 1, 100 * 1024 ** 2),  # 1B-100MB
                          'deadline_range': (1, 6),
                          'count_range': (1, 100),
                          'weight': 0.4},
@@ -116,14 +116,14 @@ def generate_realistic_jobs(num_of_jobs, deadline_end=25):
                             'deadline_range': (6, 18),
                             'count_range': (100, 1000),
                             'weight': 0.35},
-        'large_relaxed': {'size_range': (10 * 1024 ** 3, 100 * 1024 ** 3),  # 10GB-100GB
-                          'deadline_range': (12, 25),
-                          'count_range': (1000, 5000),
-                          'weight': 0.2},
-        'huge_flexible': {'size_range': (100 * 1024 ** 3, 10 * 1024 ** 4),  # 100GB-1TB
-                          'deadline_range': (18, 25),
-                          'count_range': (5000, 10000),
-                          'weight': 0.05}
+        # 'large_relaxed': {'size_range': (10 * 1024 ** 3, 500 * 1024 ** 3),  # 10GB-100GB
+        #                   'deadline_range': (12, 25),
+        #                   'count_range': (1000, 5000),
+        #                   'weight': 0.2},
+        # 'huge_flexible': {'size_range': (100 * 1024 ** 3, 10 * 1024 ** 4),  # 100GB-1TB
+        #                   'deadline_range': (18, 25),
+        #                   'count_range': (5000, 10000),
+        #                   'weight': 0.05}
     }
 
     jobs = []
@@ -156,6 +156,11 @@ def generate_realistic_jobs(num_of_jobs, deadline_end=25):
         })
 
     return jobs, total_data
+
+
+def human_readable_bytes(bytes, units=[' bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB']):
+    """Returns a human-readable string representation of bytes."""
+    return str(bytes) + units[0] if bytes < 1024 else human_readable_bytes(bytes >> 10, units[1:])
 
 
 if __name__ == "__main__":

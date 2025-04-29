@@ -3,33 +3,23 @@ from typing import List, Dict
 import click
 import pandas as pd
 import math
-from .output import OutputFormatter
 
 
 class EarliestDeadlineFirst:
-    def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict], node_list: List[Dict]):
+    def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict]):
         self.df = associations_df
         self.job_list = job_list
-        self.node_list = node_list
         self.nodes = associations_df['node'].unique()
         self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
-
-        # Precompute job metrics
-        self.job_metrics = self._precompute_job_metrics()
-
-        # Initialize node capacities (3600s per time slot)
         self.capacity = {
             node: {slot: 3600.0 for slot in self.time_slots}
             for node in self.nodes
         }
+        # Precompute job metrics
+        self.job_metrics = self._precompute_job_metrics()
 
-        # Output formatter
-        self.output = OutputFormatter(
-            associations_df=self.df,
-            job_list=self.job_list,
-            node_list=self.node_list,
-            time_slots=self.time_slots
-        )
+        # Initialize node capacities (3600s per time slot)
+
 
     def _precompute_job_metrics(self):
         """Precompute metrics for each job-node pair"""
@@ -82,7 +72,7 @@ class EarliestDeadlineFirst:
 
         return []
 
-    def _add_schedule_entry(self, idx, job, node, slot_indices, metrics, schedule):
+    def _add_schedule_entry(self, job, node, slot_indices, metrics, schedule):
         """Add an entry to the schedule and update capacities"""
         transfer_time = metrics['transfer_time']
         time_per_slot = transfer_time / len(slot_indices)
@@ -92,7 +82,6 @@ class EarliestDeadlineFirst:
             self.capacity[node][slot_time] -= time_per_slot
 
             schedule.append({
-                'idx': idx,
                 'job_id': job['id'],
                 'node': node,
                 'forecast_id': slot_time,
@@ -124,17 +113,11 @@ class EarliestDeadlineFirst:
                 slot_indices = self._find_available_slots(job_id, node, deadline)
                 if slot_indices:
                     metrics = self._get_job_metrics(job_id, node)
-                    self._add_schedule_entry(idx, job, node, slot_indices, metrics, schedule)
+                    self._add_schedule_entry(job, node, slot_indices, metrics, schedule)
                     scheduled = True
                     break
 
             if not scheduled:
                 click.secho(f"‼️ URGENT: Failed to schedule Job {job_id} (deadline: {deadline})", fg='red')
 
-        # Format and return results
-        schedule_df = pd.DataFrame(schedule)
-        return self.output.format_output(
-            schedule_df=schedule_df,
-            filename='edf_schedule.csv',
-            optimization_mode='earliest_deadline_first'
-        )
+        return pd.DataFrame(schedule)

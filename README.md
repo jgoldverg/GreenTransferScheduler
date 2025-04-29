@@ -28,7 +28,9 @@ saying we want 4 flows moving a total of 10TB.
 
 ## Various run commands:
 - shifting in time command 
-```python3 main.py schedule all --update-forecasts=False --nodes_config ../config/node_configs/simple_transfer.json --trace_route ../config/traceroutes/onesource/jgoldverg\@gmail.com-cali_traceroute_to_cali.json --job_file=../config/jobs_config/9_jobs.json```
-
+Run/Gen simulation data: ```python3 main.py gen -t ../config/traceroutes/onesource/jgoldverg\@gmail.com-cali_traceroute_to_cali.json -j ../config/jobs_config/9_jobs.json -n ../config/node_configs/simple_transfer.json```
+Run schedules ```python3 main.py schedule all -j ../config/jobs_config/9_jobs.json -n ../config/node_configs/simple_transfer.json```
+- 
 - shifting space + time command 
-```python3 main.py schedule all --update-forecasts=False --nodes_config ../config/node_configs/nodes_config.json --trace_route ../config/traceroutes/many_sources_to_one_transfer_node/ --job_file=../config/jobs_config/9_jobs.json```
+Generate data ```python3 main.py gen -t ../config/traceroutes/many_sources_to_one_transfer_node/ -j ../config/jobs_config/9_jobs.json -n ../config/node_configs/nodes_space_3_config.json```
+Run Schedules ```python3 main.py schedule all -j ../config/jobs_config/9_jobs.json -n ../config/node_configs/nodes_space_3_config.json```

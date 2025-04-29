@@ -2,33 +2,24 @@ from collections import defaultdict
 from typing import List, Dict
 import click
 import pandas as pd
-from .output import OutputFormatter
 
 
 class ShortestJobFirst:
-    def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict], node_list: List[Dict]):
+    def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict]):
         self.df = associations_df
         self.job_list = job_list
-        self.node_list = node_list
         self.nodes = associations_df['node'].unique()
         self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
+        self.capacity = {
+            node: {slot: 3600.0 for slot in self.time_slots}
+            for node in self.nodes
+        }
 
         # Precompute transfer times and other metrics
         self.job_metrics = self._precompute_job_metrics()
 
-        # Initialize capacity: each node has 3600s per time slot
-        self.capacity = {
-            node: {slot: 3600 for slot in self.time_slots}
-            for node in self.nodes
-        }
 
-        # Output formatter
-        self.output = OutputFormatter(
-            associations_df=self.df,
-            job_list=self.job_list,
-            node_list=self.node_list,
-            time_slots=self.time_slots
-        )
+
 
     def _precompute_job_metrics(self):
         """Precompute metrics for each job-node pair"""
@@ -83,11 +74,10 @@ class ShortestJobFirst:
 
         return []
 
-    def _add_entry(self, idx: int, job: Dict, node: str, slot_time: int, metrics: Dict, alloc: float, schedule: List):
+    def _add_entry(self, job: Dict, node: str, slot_time: int, metrics: Dict, alloc: float, schedule: List):
         """Helper method to add an entry to the schedule"""
         self.capacity[node][slot_time] -= alloc
         schedule.append({
-            'idx': idx,
             'job_id': job['id'],
             'node': node,
             'forecast_id': slot_time,
@@ -96,7 +86,6 @@ class ShortestJobFirst:
             'throughput': metrics['throughput'],
             'transfer_time': alloc,  # Divided transfer_time across slots
             'deadline': job.get('deadline'),
-            'extendable': job.get('extendable', False)
         })
 
     def plan(self):
@@ -137,7 +126,7 @@ class ShortestJobFirst:
 
                 for slot_idx in slot_indices:
                     slot_time = self.time_slots[slot_idx]
-                    self._add_entry(idx, job, node, slot_time, metrics, time_per_slot, schedule)
+                    self._add_entry(job, node, slot_time, metrics, time_per_slot, schedule)
 
                 scheduled = True
                 break
@@ -145,9 +134,4 @@ class ShortestJobFirst:
             if not scheduled:
                 click.secho(f"⚠️ Failed to schedule Job {job_id} (deadline: {deadline})", fg='yellow')
 
-        schedule_df = pd.DataFrame(schedule)
-        return self.output.format_output(
-            schedule_df=schedule_df,
-            filename='sjf_schedule.csv',
-            optimization_mode='shortest_job_first'
-        )
+        return pd.DataFrame(schedule)

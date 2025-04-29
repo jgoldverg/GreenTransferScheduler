@@ -78,7 +78,7 @@ static void receiver(std::vector<std::string> args) {
 
     for (int i = 0; i < flow_amount; i++) {
         // Simulate buffer processing overhead (1 integer operation per byte)
-        long this_chunk_size = sizeof(data[i]);
+        long this_chunk_size = strlen(data[i]) + 1;
         double buffer_process_work = this_chunk_size * 1; // 1 integer operation per byte
         sg4::this_actor::execute(buffer_process_work); // Synchronous execution
 
@@ -148,6 +148,8 @@ int main(int argc, char *argv[]) {
     sg4::Actor::create("sender", e.host_by_name(node_name), sender, argSender);
     sg4::Actor::create("receiver", e.host_by_name(destination_node), receiver, argReceiver);
 
+    long job_size = std::stol(argSender[1]);
+
     /* And now, launch the simulation */
     double start_time = sg4::Engine::get_clock();
     e.run();
@@ -157,6 +159,8 @@ int main(int argc, char *argv[]) {
 
     json output;
     output["transfer_duration"] = sg4::Engine::get_clock();
+    output["job_size_bytes"] = job_size;
+    output["flow_count"] = std::stoi(argSender[0]);
     json host_energy;
     json link_energy;
     double total_energy_hosts = 0.0;

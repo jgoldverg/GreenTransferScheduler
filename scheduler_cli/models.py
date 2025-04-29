@@ -1,4 +1,5 @@
 import os
+from enum import Enum
 from pathlib import Path
 from typing import List, Union, Dict
 import json
@@ -12,6 +13,14 @@ import requests
 #     size, unit = size[:-2], size[-2:].upper()
 #     return int(size) * units[unit] * 8  # Convert to bits
 
+class PlanAlgorithm(Enum):
+    EARLIEST_DEADLINE_FIRST = "edf"
+    SHORTEST_JOB_FIRST = "sjf"
+    WORST_CASE = "worst"
+    BRUTE_FORCE_GREEN_CASE = "green"
+    LINEAR_PROGRAMMING_GREEN = "milp_green"
+    ALL = "all"
+    ROUND_ROBIN = "rr"
 
 # Utility to convert NIC speed to bps
 def parse_speed_to_bps(speed_str):

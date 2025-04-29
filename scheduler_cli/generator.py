@@ -88,8 +88,7 @@ class DataGenerator:
             click.secho(f"Forecasts saved to {self.forecasts_path}", fg="green", bold=True)
             click.secho("Forecasts downloaded and processed successfully!", fg="green", bold=True)
 
-    def generate_energy_data(self):
-        """Parallel execution with Click progress tracking"""
+    def generate_energy_data(self, mode='time'):
         tasks = [(node['name'], job['bytes'], job['id'])
                  for node in self.node_list
                  for job in self.job_list]
@@ -141,14 +140,13 @@ class DataGenerator:
                                 fg="yellow", dim=True)
 
                 for job in self.job_list:
-                    data_bits = int(job['bytes']) * 8
                     node_job_energy_data = self.simulator.parse_simulation_output(node_name, job['id'])
                     transfer_time_seconds = node_job_energy_data['transfer_duration']
-                    throughput = data_bits / transfer_time_seconds  # bps
+                    job_size_bytes = node_job_energy_data['job_size_bytes']
+                    throughput = (job_size_bytes * 8) / transfer_time_seconds  # bps
                     total_energy = int(node_job_energy_data['total_energy_hosts']) + int(
                         node_job_energy_data['total_link_energy'])
                     emissions = self.emissions_for_path_forecast(node_name, job['id'], forecast_idx)
-                    # emissions = carbon_emissions_formula(total_energy, ci_avg)
 
                     # Append data to list
                     data_list.append({
@@ -161,7 +159,8 @@ class DataGenerator:
                         "link_joules": node_job_energy_data['total_link_energy'],
                         "total_joules": total_energy,
                         "avg_ci": ci_avg,
-                        "carbon_emissions": emissions
+                        "carbon_emissions": emissions,
+                        'job_deadline': job['deadline']
                     })
 
         # Convert list to DataFrame (efficient)

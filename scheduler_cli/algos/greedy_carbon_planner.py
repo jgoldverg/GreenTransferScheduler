@@ -1,29 +1,22 @@
 from typing import List, Dict
 import pandas as pd
-from .output import OutputFormatter
 
 
 class CarbonAwarePlanner:
-    def __init__(self, associations_df: pd.DataFrame, jobs: List[Dict], nodes: List[Dict],
+    def __init__(self, associations_df: pd.DataFrame, jobs: List[Dict],
                  mode: str = 'min'):
         self.df = associations_df
         self.mode = mode.lower()
         self.job_list = jobs
-        self.node_list = nodes
         self.reverse_sort = (self.mode == 'max')
 
         # Initialize capacity tracking
-        self.capacity = {n['name']: {s: 3600 for s in associations_df['forecast_id'].unique()}
-                         for n in nodes}
-        self.time_slots = sorted(associations_df['forecast_id'].unique())
-
-        # Initialize output formatter
-        self.output_formatter = OutputFormatter(
-            associations_df=self.df,
-            job_list=self.job_list,
-            node_list=self.node_list,
-            time_slots=self.time_slots
-        )
+        self.nodes = associations_df['node'].unique()
+        self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
+        self.capacity = {
+            node: {slot: 3600.0 for slot in self.time_slots}
+            for node in self.nodes
+        }
 
         # Sort jobs by deadline then carbon priority
         self.jobs = sorted(
@@ -46,11 +39,7 @@ class CarbonAwarePlanner:
             if not self._allocate_job(job, schedule):
                 unallocated_jobs.append(job['id'])
 
-        return self.output_formatter.format_output(
-            schedule_df=pd.DataFrame(schedule),
-            filename=f'carbon_aware_{self.mode}_case.csv',
-            optimization_mode=f'greedy_{self.mode}'
-        )
+        return pd.DataFrame(schedule)
 
     def _allocate_job(self, job: Dict, schedule: List) -> bool:
         job_df = self.df[self.df['job_id'] == job['id']]
