@@ -1,18 +1,18 @@
 [
   {
-    "name": "jgoldverg@gmail.com-tacc",
-    "total_ram": 8,
-    "NIC_SPEED": "5Gbps",
-    "CPU": 2,
+    "name": "tacc",
+    "total_ram": 206,
+    "NIC_SPEED": "10Gbps",
+    "CPU": 24,
     "power": {
-      "min": 1,
-      "max": 4095
+      "min": 60,
+      "max": 150
     },
-    "gf": "20",
+    "gf": "25.17",
     "type": "source"
   },
   {
-    "name": "jgoldverg@gmail.com-macmini",
+    "name": "buff",
     "total_ram": 16,
     "NIC_SPEED": "1Gbps",
     "CPU": 8,

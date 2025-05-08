@@ -8,6 +8,8 @@ from scheduler_algo import Scheduler
 from scheduler_algo import PlanAlgorithm
 import random
 
+from zone_discovery import HistoricalForecastService
+
 
 @click.group()
 def scheduler_cli():
@@ -16,9 +18,13 @@ def scheduler_cli():
 
 @scheduler_cli.command()
 @click.option('-t', '--trace', type=click.Path(),
-              default='../config/traceroutes/many_sources_to_one_transfer_node/',
+              default='/workspace/config/traceroutes/pmeter_tr',
               show_default=True,
               help="Path to the trace route file.")
+@click.option('-s', '--forecast_start', type=click.DateTime(), default='2024-01-01 00:00:00',
+              help="The start of the forecast you wish to use.", show_default=True)
+@click.option('-e', '--forecast_end', type=click.INT, default=1,
+              help="The number of days you wish the forecast to cover", show_default=True)
 @click.option('-j', '--jobs', type=click.Path(),
               default='../config/jobs_config/9_jobs.json',
               show_default=True,
@@ -27,48 +33,50 @@ def scheduler_cli():
               default="../config/node_configs/nodes_space_3_config.json",
               show_default=True,
               help="Path to the source nodes file.")
-@click.option('-f', '--forecast', type=click.Path(),
-              default='../data/forecast_data.csv',
-              show_default=True,
-              help="Path to the electricity forecast file.")
-@click.option('-u', '--update', type=click.BOOL,
-              default=False,
-              show_default=True,
-              help="Whether to download fresh forecasts.")
 @click.option('-d', '--df', type=click.Path(),
               default="../data/associations_df.csv",
               show_default=True,
               help="Path to output the associations_df.")
-def gen(trace, jobs, nodes, forecast, update, df):
+@click.option('-g', '--geojson_path', type=click.Path(), default='/workspace/config/geojson/world.geojson',
+              show_default=True,
+              help='geojson file to use')
+@click.option('-h', '--historical_ci_path', type=click.Path(),
+              default='/workspace/data/historical_data/2024_ZONES_DF.csv',
+              show_default=True, help='The Electricity maps historical csv to use')
+def gen(forecast_start, forecast_end, trace, jobs, nodes, df, geojson_path, historical_ci_path):
     click.secho("\n⚙️ Associations Df creation parameters:", fg="cyan", bold=True)
-    click.echo(f"  • Trace Route: {click.style(trace, fg='yellow')}")
-    click.echo(f"  • Job File: {click.style(jobs, fg='yellow')}")
-    click.echo(f"  • Nodes Config: {click.style(nodes, fg='yellow')}")
-    click.echo(f"  • Forecast File: {click.style(forecast, fg='yellow')}")
-    click.echo(f"  • Update Forecasts: {click.style(str(update), fg='yellow')}")
-    click.echo(f"  • Associations DF Path: {click.style(df, fg='yellow')}")
-    click.secho("\n✅ Starting scheduler...", fg="green")
+    click.secho(f"  • Forecast Start date: {click.style(forecast_start, fg='yellow')}")
+    click.secho(f"  • Forecast Length(days) date: {click.style(forecast_end, fg='yellow')}")
+    click.secho(f"  • Geojson path to use: {click.style(geojson_path, fg='yellow')}")
+    click.secho(f"  • Historical CI path to use: {click.style(historical_ci_path, fg='yellow')}")
+    click.secho(f"  • Trace Route: {click.style(trace, fg='yellow')}")
+    click.secho(f"  • Job File: {click.style(jobs, fg='yellow')}")
+    click.secho(f"  • Nodes Config: {click.style(nodes, fg='yellow')}")
+    click.secho(f"  • Associations DF Path: {click.style(df, fg='yellow')}")
 
-    # node_file_path, ip_list_file_path, job_file_path, update_forecasts, forecasts_path
+    click.secho("\n✅ Starting data generation...", fg="green")
+
+    forecast_service = HistoricalForecastService(forecast_start_utc=forecast_start, forecast_days=forecast_end,
+                                                 path_geojson=geojson_path, df_ci_path=historical_ci_path)
     scheduler_algo = DataGenerator(node_file_path=nodes, ip_list_file_path=trace, job_file_path=jobs,
-                                   update_forecasts=update, forecasts_path=forecast)
+                                   forecast_service=forecast_service)
     scheduler_algo.prepare_fields()
     scheduler_algo.load_in_forecasts()
-    scheduler_algo.generate_energy_data()
-    scheduler_algo.create_intervals(df)
+    # scheduler_algo.generate_energy_data()
+    scheduler_algo.create_intervals_historical(df)
 
 
 @scheduler_cli.command()
 @click.argument('plan_algo', default=PlanAlgorithm.BRUTE_FORCE_GREEN_CASE.value,
                 type=click.Choice([algo.value for algo in PlanAlgorithm]))
 @click.option('-j', '--job_file', type=click.Path(),
-              default='../config/jobs_config/9_jobs.json',
+              default='/workspace/config/jobs_config/9_jobs.json',
               show_default=True,
               help="Path to the job file.")
 @click.option('-n', "--nodes_config", type=click.Path(),
-              default="../config/node_configs/nodes_space_3_config.json",
+              default="/workspace/config/node_configs/nodes_space_3_config.json",
               help="Path to source nodes")
-@click.option('-d', "--df-path", type=click.Path(), show_default=True, default="../data/associations_df.csv",
+@click.option('-d', "--df-path", type=click.Path(), show_default=True, default="/workspace/data/associations_df.csv",
               help="The path to output the associations_df")
 def schedule(plan_algo, job_file, nodes_config, df_path):
     """Schedule a job using the given file paths."""

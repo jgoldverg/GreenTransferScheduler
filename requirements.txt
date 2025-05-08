@@ -1,11 +1,10 @@
-numpy~=2.0.2
-requests~=2.32.3
+numpy
+requests
 click
 rich
 pandas
 matplotlib
 seaborn
-pytest
 pulp
-gymnasium
-stable-baselines3
+geopandas
+watttime

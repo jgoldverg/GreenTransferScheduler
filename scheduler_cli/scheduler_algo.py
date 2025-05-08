@@ -57,7 +57,7 @@ class Scheduler:
                 schedules_map[plan] = planner.plan()
                 total_time = time.time() - start_time
                 click.secho(f"Total time used to run {plan}: {total_time}")
-                algo_time[plan] = total_time
+                algo_time[str(plan)] = total_time
         else:
             # Get the appropriate kwargs for the specific planner
             kwargs = planner_configs.get(plan_algo, {})
@@ -66,13 +66,12 @@ class Scheduler:
                 plan_algo,
                 self.associations_df,
                 self.job_list,
-                self.node_list,
                 **kwargs
             )
             start_time = time.time()
             schedules_map[plan_algo] = planner.plan()
             total_time = time.time() - start_time
-            algo_time[plan_algo] = total_time
+            algo_time[str(plan_algo)] = total_time
             click.secho(f"Total time used to run {plan_algo}: {total_time}")
 
         # schedule_map: Dict, associations_df: pd.DataFrame, job_list : List, node_list: List

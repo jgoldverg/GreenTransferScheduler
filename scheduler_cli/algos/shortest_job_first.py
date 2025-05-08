@@ -8,38 +8,36 @@ class ShortestJobFirst:
     def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict]):
         self.df = associations_df
         self.job_list = job_list
-        self.nodes = associations_df['node'].unique()
+        self.routes = associations_df['route_key'].unique()
         self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
         self.capacity = {
-            node: {slot: 3600.0 for slot in self.time_slots}
-            for node in self.nodes
+            route: {slot: 3600.0 for slot in self.time_slots}
+            for route in self.routes
         }
 
         # Precompute transfer times and other metrics
         self.job_metrics = self._precompute_job_metrics()
 
 
-
-
     def _precompute_job_metrics(self):
         """Precompute metrics for each job-node pair"""
         metrics = defaultdict(dict)
-        for (job_id, node), group in self.df.groupby(['job_id', 'node']):
+        for (job_id, route_key), group in self.df.groupby(['job_id', 'route_key']):
             first_row = group.iloc[0]
-            metrics[job_id][node] = {
+            metrics[job_id][route_key] = {
                 'transfer_time': float(first_row['transfer_time']),
-                'carbon_emissions': float(first_row.get('carbon_emissions', 0)),
-                'throughput': float(first_row.get('throughput', 0))
+                'carbon_emissions': float(first_row.get('carbon_emissions')),
+                'throughput': float(first_row.get('throughput'))
             }
         return metrics
 
-    def _get_job_metrics(self, job_id, node):
+    def _get_job_metrics(self, job_id, route_key):
         """Get precomputed metrics for a job-node pair"""
-        return self.job_metrics.get(job_id, {}).get(node, None)
+        return self.job_metrics.get(job_id, {}).get(route_key)
 
-    def _find_available_slots(self, job_id, node, deadline):
+    def _find_available_slots(self, job_id, route_key, deadline):
         """Find available slots for a job considering deadline"""
-        metrics = self._get_job_metrics(job_id, node)
+        metrics = self._get_job_metrics(job_id, route_key)
         if not metrics or metrics['transfer_time'] <= 0:
             return []  # Job can't run on this node
 
@@ -65,7 +63,7 @@ class ShortestJobFirst:
             can_allocate = True
             time_per_slot = transfer_time / slots_needed
             for slot in range(start_slot, end_slot + 1):
-                if self.capacity[node][self.time_slots[slot]] < time_per_slot:
+                if self.capacity[route_key][self.time_slots[slot]] < time_per_slot:
                     can_allocate = False
                     break
 
@@ -74,12 +72,12 @@ class ShortestJobFirst:
 
         return []
 
-    def _add_entry(self, job: Dict, node: str, slot_time: int, metrics: Dict, alloc: float, schedule: List):
+    def _add_entry(self, job: Dict, route_key: str, slot_time: int, metrics: Dict, alloc: float, schedule: List):
         """Helper method to add an entry to the schedule"""
-        self.capacity[node][slot_time] -= alloc
+        self.capacity[route_key][slot_time] -= alloc
         schedule.append({
             'job_id': job['id'],
-            'node': node,
+            'node': route_key,
             'forecast_id': slot_time,
             'allocated_time': alloc,
             'carbon_emissions': metrics['carbon_emissions'],
@@ -111,8 +109,8 @@ class ShortestJobFirst:
 
             # Get all possible nodes for this job, sorted by transfer time (fastest first)
             node_options = sorted(
-                [node for node in self.nodes if self._get_job_metrics(job_id, node)],
-                key=lambda node: self._get_job_metrics(job_id, node)['transfer_time']
+                [route_key for route_key in self.routes if self._get_job_metrics(job_id, route_key)],
+                key=lambda route_key: self._get_job_metrics(job_id, route_key)['transfer_time']
             )
 
             for node in node_options:

@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import pandas as pd
 
 
@@ -10,12 +10,12 @@ class CarbonAwarePlanner:
         self.job_list = jobs
         self.reverse_sort = (self.mode == 'max')
 
-        # Initialize capacity tracking
-        self.nodes = associations_df['node'].unique()
+        # Initialize capacity tracking for routes (source-destination pairs)
+        self.routes = associations_df[['source_node', 'destination_node']].drop_duplicates()
         self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
         self.capacity = {
-            node: {slot: 3600.0 for slot in self.time_slots}
-            for node in self.nodes
+            (row['source_node'], row['destination_node']): {slot: 3600.0 for slot in self.time_slots}
+            for _, row in self.routes.iterrows()
         }
 
         # Sort jobs by deadline then carbon priority
@@ -26,8 +26,8 @@ class CarbonAwarePlanner:
             reverse=self.reverse_sort
         )
 
-    def _get_job_emissions(self, job_id: str) -> float:
-        """Get best-case/worst-case emissions for a job"""
+    def _get_job_emissions(self, job_id: int) -> float:
+        """Get best-case/worst-case emissions for a job across all routes"""
         job_emissions = self.df[self.df['job_id'] == job_id]['carbon_emissions']
         return job_emissions.max() if self.reverse_sort else job_emissions.min()
 
@@ -38,6 +38,9 @@ class CarbonAwarePlanner:
         for job in self.jobs:
             if not self._allocate_job(job, schedule):
                 unallocated_jobs.append(job['id'])
+
+        if unallocated_jobs:
+            print(f"Warning: Failed to schedule jobs: {unallocated_jobs}")
 
         return pd.DataFrame(schedule)
 
@@ -61,19 +64,19 @@ class CarbonAwarePlanner:
         allocated_slots = []
 
         for _, slot in allocations.iterrows():
-            node = slot['node']
+            route = (slot['source_node'], slot['destination_node'])
             slot_id = slot['forecast_id']
-            node_specific_time = slot['transfer_time']
+            transfer_time = slot['transfer_time_hours'] * 3600  # Convert hours to seconds
 
             # Initialize remaining_time on first iteration
             if remaining_time is None:
-                remaining_time = node_specific_time
+                remaining_time = transfer_time
 
-            if self.capacity[node][slot_id] > 0:
-                alloc = min(self.capacity[node][slot_id], remaining_time)
-                self.capacity[node][slot_id] -= alloc
+            if self.capacity[route][slot_id] > 0:
+                alloc = min(self.capacity[route][slot_id], remaining_time)
+                self.capacity[route][slot_id] -= alloc
                 allocated_slots.append({
-                    'node': node,
+                    'route': route,
                     'slot_id': slot_id,
                     'time_used': alloc,
                     'slot_data': slot
@@ -88,18 +91,21 @@ class CarbonAwarePlanner:
 
         # If we get here, allocation failed - roll back
         for alloc in allocated_slots:
-            self.capacity[alloc['node']][alloc['slot_id']] += alloc['time_used']
+            self.capacity[alloc['route']][alloc['slot_id']] += alloc['time_used']
         return False
 
     def _add_schedule_entry(self, job: Dict, allocation: Dict, schedule: List):
         """Add an allocation to the schedule"""
+        source, dest = allocation['route']
         schedule.append({
             'job_id': job['id'],
-            'node': allocation['node'],
+            'source_node': source,
+            'destination_node': dest,
             'forecast_id': allocation['slot_id'],
             'allocated_time': allocation['time_used'],
             'carbon_emissions': allocation['slot_data']['carbon_emissions'],
             'throughput': allocation['slot_data']['throughput'],
-            'transfer_time': allocation['slot_data']['transfer_time'],
+            'transfer_time': allocation['time_used'],  # Actual allocated time in seconds
+            'transfer_time_hours': allocation['time_used'] / 3600,
             'deadline': job.get('deadline')
         })

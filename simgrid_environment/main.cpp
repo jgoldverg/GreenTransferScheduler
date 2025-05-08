@@ -8,9 +8,7 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 
-
 using json = nlohmann::json;
-/* Parameters of the random generation of the flow size */
 static const int min_size = 1e6;
 static const int max_size = 1e9;
 
@@ -19,44 +17,34 @@ namespace sg4 = simgrid::s4u;
 
 static void sender(std::vector<std::string> args) {
     xbt_assert(args.size() == 2, "The sender function expects 2 arguments.");
-    int flow_amount = std::stoi(args.at(0));  // Number of flows
-    long comm_size = std::stol(args.at(1));   // Total data size
+    int flow_amount = std::stoi(args.at(0));
+    long comm_size = std::stol(args.at(1));
 
     XBT_INFO("Sending %ld bytes in %d flows", comm_size, flow_amount);
     sg4::Mailbox *mailbox = sg4::Mailbox::by_name("message");
 
-    // Sleep before starting the transfer
-    sg4::this_actor::sleep_for(10);
+    sg4::this_actor::sleep_for(10); // Initial delay
 
     long chunk_size = comm_size / flow_amount;
     long remainder = comm_size % flow_amount;
 
-    // Simulate buffer preparation overhead (1 integer operation per byte)
-    double buffer_prep_work = comm_size * 1; // 1 integer operation per byte
-    sg4::this_actor::execute(buffer_prep_work); // Synchronous execution
+    // Simulate buffer preparation
+    double buffer_prep_work = comm_size * 1;
+    sg4::this_actor::execute(buffer_prep_work);
     XBT_INFO("Buffer preparation completed");
 
-    sg4::ActivitySet comms;  // Activity set to track parallel transfers
-
+    sg4::ActivitySet comms;
     for (int i = 0; i < flow_amount; i++) {
         long this_chunk_size = (i == flow_amount - 1) ? chunk_size + remainder : chunk_size;
-
-        // Simulate buffer copying overhead (1 integer operation per byte)
-        double buffer_copy_work = this_chunk_size * 1; // 1 integer operation per byte
-        sg4::this_actor::execute(buffer_copy_work); // Synchronous execution
+        double buffer_copy_work = this_chunk_size * 1;
+        sg4::this_actor::execute(buffer_copy_work);
 
         XBT_INFO("Flow %d sending %ld bytes", i, this_chunk_size);
-
-        // Asynchronous put to enable parallel flow transfers
         comms.push(mailbox->put_async(bprintf("%d", i), this_chunk_size));
     }
-
-    // Wait for all communication activities to complete
     comms.wait_all();
     XBT_INFO("Sender finished sending all flows.");
 }
-
-
 
 static void receiver(std::vector<std::string> args) {
     xbt_assert(args.size() == 1, "The receiver function expects 1 argument.");
@@ -66,101 +54,80 @@ static void receiver(std::vector<std::string> args) {
     sg4::Mailbox *mailbox = sg4::Mailbox::by_name("message");
 
     std::vector<char *> data(flow_amount);
-    sg4::ActivitySet comms;  // Activity set to track parallel transfers
+    sg4::ActivitySet comms;
 
     for (int i = 0; i < flow_amount; i++) {
-        // Asynchronous receive
         comms.push(mailbox->get_async<char>(&data[i]));
     }
-
-    // Wait for all communication activities to complete
     comms.wait_all();
 
     for (int i = 0; i < flow_amount; i++) {
-        // Simulate buffer processing overhead (1 integer operation per byte)
         long this_chunk_size = strlen(data[i]) + 1;
-        double buffer_process_work = this_chunk_size * 1; // 1 integer operation per byte
-        sg4::this_actor::execute(buffer_process_work); // Synchronous execution
-
+        double buffer_process_work = this_chunk_size * 1;
+        sg4::this_actor::execute(buffer_process_work);
         XBT_INFO("Flow %d received %ld bytes", i, sizeof(data[i]));
-        xbt_free(data[i]);  // Free allocated memory
+        xbt_free(data[i]);
     }
-
     XBT_INFO("Receiver finished receiving all flows.");
 }
 
-
-
 int main(int argc, char *argv[]) {
     sg4::Engine e(&argc, argv);
-
-    XBT_INFO("Activating the SimGrid link energy plugin");
     sg_link_energy_plugin_init();
     sg_host_energy_plugin_init();
 
-    xbt_assert(argc > 1, "\nUsage: %s platform_file [flowCount [datasize]]\n"
-               "\tExample: %s s4uplatform.xml \n",
-               argv[0], argv[0]);
+    xbt_assert(argc > 1, "\nUsage: %s platform_file [flowCount [datasize [job_id]]]\n"
+               "\tExample: %s s4uplatform.xml \n", argv[0], argv[0]);
     e.load_platform(argv[1]);
+
+    // Extract route key from platform file path (format: source_destination)
     std::string platform_file = argv[1];
-
     size_t start_pos = platform_file.find("simgrid_configs/") + std::string("simgrid_configs/").size();
-    size_t end_pos = platform_file.find("/", start_pos);
-    std::string node_name = platform_file.substr(start_pos, end_pos - start_pos);
-    node_name = node_name.substr(0, node_name.find("_network.xml"));
-    std::cout << "Node name: " << node_name << std::endl;    XBT_INFO("Node name: %s", node_name.c_str());
-    /* prepare to launch the actors */
+    std::string route_key = platform_file.substr(start_pos);
+    route_key = route_key.substr(0, route_key.find("_network.xml"));
 
+    // Split route key into source and destination
+    size_t underscore_pos = route_key.find('_');
+    std::string source_node = route_key.substr(0, underscore_pos);
+    std::string destination_node = route_key.substr(underscore_pos + 1);
+
+    XBT_INFO("Route: %s -> %s", source_node.c_str(), destination_node.c_str());
+
+    // Prepare arguments
     std::vector<std::string> argSender;
     std::vector<std::string> argReceiver;
-    if (argc > 2) {
-        argSender.emplace_back(argv[2]); // Take the amount of flows from the command line
-        argReceiver.emplace_back(argv[2]);
-    } else {
-        argSender.emplace_back("1"); // Default value
-        argReceiver.emplace_back("1");
-    }
+
+    argSender.push_back(argc > 2 ? argv[2] : "1"); // flow count
+    argReceiver.push_back(argc > 2 ? argv[2] : "1");
 
     if (argc > 3) {
         if (strcmp(argv[3], "random") == 0) {
-            // We're asked to get a random size
-            std::string size = std::to_string(simgrid::xbt::random::uniform_int(min_size, max_size));
-            argSender.push_back(size);
+            argSender.push_back(std::to_string(simgrid::xbt::random::uniform_int(min_size, max_size)));
         } else {
-            // Not "random" ? Then it should be the size to use
-            argSender.emplace_back(argv[3]); // Take the datasize from the command line
+            argSender.push_back(argv[3]); // datasize
         }
     } else {
-        // No parameter at all? Then use the default value
-        argSender.emplace_back("25000");
+        argSender.push_back("25000"); // default datasize
     }
 
-    std::string job_id = "";
-    if(argc > 4) {
-        job_id = argv[4];
-    }
+    std::string job_id = argc > 4 ? argv[4] : "0";
 
-    std::string destination_node = "";
-    if(argc > 5) {
-        destination_node = argv[5];
-    }
-
-    sg4::Actor::create("sender", e.host_by_name(node_name), sender, argSender);
+    // Create actors
+    sg4::Actor::create("sender", e.host_by_name(source_node), sender, argSender);
     sg4::Actor::create("receiver", e.host_by_name(destination_node), receiver, argReceiver);
 
     long job_size = std::stol(argSender[1]);
-
-    /* And now, launch the simulation */
-    double start_time = sg4::Engine::get_clock();
     e.run();
 
-    double end_time = sg4::Engine::get_clock();
-    XBT_INFO("Simulation time: %f s", end_time - start_time);
-
+    // Collect and save energy data
     json output;
     output["transfer_duration"] = sg4::Engine::get_clock();
     output["job_size_bytes"] = job_size;
     output["flow_count"] = std::stoi(argSender[0]);
+    output["route_key"] = route_key;
+    output["source_node"] = source_node;
+    output["destination_node"] = destination_node;
+
     json host_energy;
     json link_energy;
     double total_energy_hosts = 0.0;
@@ -179,8 +146,11 @@ int main(int argc, char *argv[]) {
     output["total_energy_hosts"] = total_energy_hosts;
     output["total_link_energy"] = total_link_energy;
 
-    std::ofstream file("/workspace/data/energy_consumption_" + node_name + "_"+ job_id+"_.json");
+    std::string output_file = "/workspace/data/energy_consumption_" + route_key + "_" + job_id + "_.json";
+    std::ofstream file(output_file);
     file << output.dump(4);
     file.close();
+
+    XBT_INFO("Energy data saved to %s", output_file.c_str());
     return 0;
 }

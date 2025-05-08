@@ -1,4 +1,5 @@
 import json
+import os.path
 import subprocess
 import xml.etree.ElementTree as ET
 from typing import List, Dict
@@ -24,117 +25,152 @@ class SimGridSimulator:
                 click.secho(f"destination node: {self.destination_node}")
 
     def create_xml_for_traceroute(self):
-        for node_id, traceroute in self.traceroute_data.items():
-            node_network_file_path = f'../config/simgrid_configs/{node_id}_network.xml'
-            self.node_network_xml_paths.append(f'{node_id}_network.xml')
+        """Generate SimGrid XML files with optimized energy profiles for all network components."""
+        route_routers = {}  # {route_key: {ip: router_name}}
+        route_links = {}  # {route_key: {ip: link_name}}
+        self.node_network_xml_paths = []
+
+        # Energy profile configurations
+        ENERGY_PROFILES = {
+            'core_router': {
+                'wattage_per_state': "100.0:500.0:1000.0",
+                'wattage_off': "10.0",
+                'speed': "100Gf",
+                'cores': "8"
+            },
+            'edge_router': {
+                'wattage_per_state': "50.0:275.0:500.0",
+                'wattage_off': "5.0",
+                'speed': "50Gf",
+                'cores': "4"
+            },
+            'backbone_link': {
+                'wattage_range': "100.0:200.0",
+                'wattage_off': "15.0"
+            },
+            'standard_link': {
+                'wattage_range': "80.0:130.0",
+                'wattage_off': "10.0"
+            }
+        }
+
+        for route_key, traceroute in self.traceroute_data.items():
+            source_node, destination_node = route_key.split('_')
+
+            # Validate nodes exist
+            if source_node not in self.node_map or destination_node not in self.node_map:
+                click.secho(f"Skipping invalid route {route_key} - nodes not found", fg='yellow')
+                continue
+
+            if self.node_map[source_node].get('type') == 'destination':
+                continue
+
+            # Initialize route-specific mappings
+            routers = {}
+            links = {}
+            output_path = f'../config/simgrid_configs/{route_key}_network.xml'
+            self.node_network_xml_paths.append(f'{route_key}_network.xml')
 
             platform = ET.Element("platform", version="4.1")
             doctype = '<!DOCTYPE platform SYSTEM "https://simgrid.org/simgrid.dtd">\n'
             zone = ET.SubElement(platform, "zone", id="AS0", routing="Full")
 
-            trace_route = self.traceroute_data[node_id]
-            routers = {}
-            link_map = {}
-            links = []
+            # Determine if this is a backbone path
+            is_backbone = any(
+                hop.node_id in [n for n, data in self.node_map.items() if data.get('type') == 'dtn']
+                for hop in traceroute
+            )
 
-            # Find source and destination nodes based on type
-            source_node = node_id
-            destination_node = None
-
-            # Find the destination node in our node_map
-            for n_id, n_data in self.node_map.items():
-                if n_data.get('type') == 'destination':
-                    destination_node = n_id
-                    break
-
-            if not destination_node:
-                raise ValueError("No destination node found in node_map")
-
-            # Create routers with energy properties
-            for i, hop in enumerate(trace_route):
-                if i == 0:
-                    # First node is always our source node
+            # Process each hop
+            xml_links = []
+            for i, hop in enumerate(traceroute):
+                # Handle source, destination, and routers differently
+                if i == 0:  # Source node
                     router_id = source_node
                     node_data = self.node_map[source_node]
-                    cores = str(node_data['CPU'])
-                    speed = str(float(node_data['gf']) * 1000000000) + "f"
-                    is_source = True
-                    is_destination = False
-                elif i == len(trace_route) - 1:
-                    # Last node is our destination node
+                    profile = {
+                        'speed': f"{float(node_data['gf']) * 1e9:.0f}f",
+                        'cores': str(node_data['CPU']),
+                        'wattage_per_state': f"{node_data['power']['min']}:{(node_data['power']['max'] + node_data['power']['min']) / 2}:{node_data['power']['max']}",
+                        'wattage_off': "5.0"
+                    }
+                elif i == len(traceroute) - 1:  # Destination node
                     router_id = destination_node
                     node_data = self.node_map[destination_node]
-                    cores = str(node_data['CPU'])
-                    speed = str(float(node_data['gf']) * 1000000000) + "f"
-                    is_source = False
-                    is_destination = True
-                else:
-                    # Intermediate routers
-                    router_id = f"router{i}"
-                    cores = "4"  # Default cores for routers
-                    speed = str(50 * 1000000000) + "f"  # 50 GF default for routers
-                    is_source = False
-                    is_destination = False
+                    profile = {
+                        'speed': f"{float(node_data['gf']) * 1e9:.0f}f",
+                        'cores': str(node_data['CPU']),
+                        'wattage_per_state': f"{node_data['power']['min']}:{(node_data['power']['max'] + node_data['power']['min']) / 2}:{node_data['power']['max']}",
+                        'wattage_off': "5.0"
+                    }
+                else:  # Intermediate router
+                    router_id = f"router_{route_key}_{i}"
+                    profile = ENERGY_PROFILES['core_router' if is_backbone else 'edge_router']
+                    routers[hop.ip] = router_id  # Store route-specific mapping
 
-                # Create the router element
-                router_element = ET.SubElement(
-                    zone, "host", id=router_id, speed=speed, core=cores
+                # Create router element
+                router = ET.SubElement(
+                    zone, "host",
+                    id=router_id,
+                    speed=profile['speed'],
+                    core=profile['cores']
                 )
+                ET.SubElement(router, "prop", id="wattage_per_state", value=profile['wattage_per_state'])
+                ET.SubElement(router, "prop", id="wattage_off", value=profile['wattage_off'])
 
-                # Add energy consumption properties
-                if is_source or is_destination:
-                    node_data = self.node_map[router_id]
-                    pwr_min = int(node_data['power']['min'])
-                    pwr_max = int(node_data['power']['max'])
-                    avg = (pwr_max + pwr_min) / 2
-                    power_profile = f"{pwr_min}:{avg}:{pwr_max}"
-                else:
-                    power_profile = "50.0:275.0:500.0"  # Default for routers
+                if i not in [0, len(traceroute) - 1]:  # Mark as router
+                    ET.SubElement(router, "prop", id="is_router", value="true")
 
-                ET.SubElement(router_element, "prop", id="wattage_per_state", value=power_profile)
-                ET.SubElement(router_element, "prop", id="wattage_off", value="5")
+                # Create links
+                if i > 0:
+                    link_id = f"link_{route_key}_{i}"
+                    links[hop.ip] = link_id  # Store route-specific mapping
+                    prev_hop = traceroute[i - 1]
+                    prev_router_id = destination_node if i == 1 else f"router_{route_key}_{i - 1}"
+                    xml_links.append((prev_router_id, router_id, link_id))
 
-                # Mark as router (for intermediate nodes)
-                if not is_source and not is_destination:
-                    ET.SubElement(router_element, "prop", id="is_router", value="true")
-
-                # Store the router IP mapping
-                routers[hop.ip] = router_id
-
-                if i != 0:  # Skip the source router for links
-                    prev_ip = trace_route[i - 1].ip
-                    link_id = f"link{i}"
-                    links.append((routers[prev_ip], router_id, link_id))
-                    link_map[hop.ip] = link_id
-
-                    # Determine bandwidth based on node type
-                    if i == 1:  # Link from source to first router
-                        bandwidth = self.node_map[source_node]['NIC_SPEED']
-                    elif i == len(trace_route) - 1:  # Link to destination
-                        bandwidth = self.node_map[destination_node]['NIC_SPEED']
-                    else:  # Intermediate links
-                        bandwidth = "10Gbps"  # Default for router-to-router links
-
-                    link_element = ET.SubElement(
-                        zone, "link", id=link_id, bandwidth=bandwidth, latency=f"{hop.rtt}ms", sharing_policy="SHARED"
+                    link_profile = ENERGY_PROFILES['backbone_link' if is_backbone else 'standard_link']
+                    link = ET.SubElement(
+                        zone, "link",
+                        id=link_id,
+                        bandwidth=self._determine_bandwidth(i, len(traceroute), source_node, is_backbone),
+                        latency=f"{hop.rtt * 1000:.2f}ms",
+                        sharing_policy="SHARED"
                     )
-                    ET.SubElement(link_element, "prop", id="wattage_range", value="80.0:130.0")
-                    ET.SubElement(link_element, "prop", id="wattage_off", value="10")
+                    ET.SubElement(link, "prop", id="wattage_range", value=link_profile['wattage_range'])
+                    ET.SubElement(link, "prop", id="wattage_off", value=link_profile['wattage_off'])
 
-            # Define the route from source to destination
+            # Create route in XML
             route = ET.SubElement(zone, "route", src=source_node, dst=destination_node)
-            for src, dst, link_id in links:
+            for src, dst, link_id in xml_links:
                 ET.SubElement(route, "link_ctn", id=link_id)
 
-            # Convert to string and save
-            xml_string = ET.tostring(platform, encoding="utf-8").decode("utf-8")
-            xml_string = f'<?xml version="1.0"?>\n{doctype}{xml_string}'
+            # Save XML file
+            xml_str = ET.tostring(platform, encoding='unicode')
+            with open(output_path, 'w') as f:
+                f.write(f'<?xml version="1.0"?>\n{doctype}{xml_str}')
 
-            with open(node_network_file_path, "w", encoding="utf-8") as f:
-                f.write(xml_string)
+            # Store route mappings
+            route_routers[route_key] = routers
+            route_links[route_key] = links
 
-            print(f"SimGrid XML file generated: {node_network_file_path}")
-            return routers, link_map
+            click.secho(f"Generated: {output_path} ({'backbone' if is_backbone else 'standard'} path)", fg='green')
+
+        return route_routers, route_links
+
+    def _determine_bandwidth(self, hop_index, total_hops, source_node, is_backbone):
+        """Determine appropriate bandwidth for each link segment."""
+        # First hop from source
+        if hop_index == 1:
+            return self.node_map[source_node]['NIC_SPEED']
+
+        # Last hop to destination (handled in main method)
+        elif hop_index == total_hops - 1:
+            return self.node_map[self.destination_node]['NIC_SPEED']
+
+        # Intermediate links
+        else:
+            return "100Gbps" if is_backbone else "10Gbps"
 
     def run_simulation(self, node_name="jgoldverg@gmail.com-ccuc", flows=1, job_size=1000000000000, job_id=1):
         xml_file_path = "/workspace/config/simgrid_configs/" + node_name + "_network.xml"
@@ -146,5 +182,7 @@ class SimGridSimulator:
 
     def parse_simulation_output(self, node_name, job_id):
         file_path = f"/workspace/data/energy_consumption_{node_name}_{job_id}_.json"
-        with open(file_path, 'r') as file:
-            return json.load(file)
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as file:
+                return json.load(file)
+        return None

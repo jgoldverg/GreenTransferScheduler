@@ -1,0 +1,10 @@
+data/
+graphing/*.pdf
+graphing/graphs/
+.DS_STORE
+.idea/workspace.xml
+config/traceroutes/.DS_Store
+simgrid_environment/build/
+.venv/
+scheduler_cli/algos/__pycache__/
+__pycache__/

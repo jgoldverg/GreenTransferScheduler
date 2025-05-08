@@ -1,9 +1,9 @@
 [
   {
-    "name": "jgoldverg@gmail.com-cali",
+    "name": "oregon",
     "total_ram": 8,
-    "NIC_SPEED": "1Gbps",
-    "CPU": 2,
+    "NIC_SPEED": "5Gbps",
+    "CPU": 8,
     "power": {
       "min": 1,
       "max": 4095
@@ -12,7 +12,7 @@
     "type": "source"
   },
   {
-    "name": "jgoldverg@gmail.com-ccuc",
+    "name": "chi",
     "total_ram": 128,
     "NIC_SPEED": "10Gbps",
     "CPU": 64,
@@ -24,7 +24,7 @@
     "type": "dtn"
   },
   {
-    "name": "jgoldverg@gmail.com-tacc",
+    "name": "tacc",
     "total_ram": 206,
     "NIC_SPEED": "10Gbps",
     "CPU": 24,
@@ -36,7 +36,7 @@
     "type": "dtn"
   },
   {
-    "name": "jgoldverg@gmail.com-macmini",
+    "name": "buff",
     "total_ram": 16,
     "NIC_SPEED": "1Gbps",
     "CPU": 8,

@@ -1,29 +1,30 @@
-import concurrent.futures
 import json
-import os.path
+import math
+from typing import Dict, List
 
 import click
 import pandas as pd
 
-from models import read_in_ip_map, get_unique_ips, IpOrderAndForecastData, carbon_emissions_formula
+from models import get_unique_ips, IpToLonAndLat, process_mtr_files, process_pmeter_tr
 from simgrid_simulator import SimGridSimulator
+from zone_discovery import HistoricalForecastService
 
 
 class DataGenerator:
 
-    def __init__(self, node_file_path, ip_list_file_path, job_file_path, update_forecasts, forecasts_path):
+    def __init__(self, node_file_path, ip_list_file_path, job_file_path, forecast_service: HistoricalForecastService):
         self.forecasts_df = None
         self.simulator = None
-        self.nodeid_to_map_traceroutes = None
+        self.nodeid_to_map_traceroutes: Dict[str, List[IpToLonAndLat]] = None
         self.job_list = None
         self.node_map = None
         self.node_list = None
         self.node_file_path = node_file_path
         self.traceroute_path = ip_list_file_path
         self.job_file_path = job_file_path
-        self.update_forecasts = update_forecasts
-        self.forecasts_path = forecasts_path
         self.routers_ip = {}
+        self.links_ip = {}
+        self.forecast_service = forecast_service
 
     def prepare_fields(self):
         with open(self.node_file_path, 'r') as f:
@@ -35,7 +36,10 @@ class DataGenerator:
         with open(self.job_file_path, 'r') as f:
             self.job_list = json.load(f)
 
-        self.nodeid_to_map_traceroutes = read_in_ip_map(self.traceroute_path)
+        self.nodeid_to_map_traceroutes: Dict[str, List[IpToLonAndLat]] = process_pmeter_tr(self.traceroute_path)
+        click.secho(
+            f"Node Id Map to Traceroute: Keys={self.nodeid_to_map_traceroutes.keys()} the len of values are {len(self.nodeid_to_map_traceroutes)}",
+            fg='cyan')
         self.ip_list = get_unique_ips(self.nodeid_to_map_traceroutes)
 
         self.simulator = SimGridSimulator(traceroute_data=self.nodeid_to_map_traceroutes, node_list=self.node_list,
@@ -43,55 +47,37 @@ class DataGenerator:
         self.routers_ip, self.links_ip = self.simulator.create_xml_for_traceroute()
 
     def load_in_forecasts(self):
-        if os.path.exists(self.forecasts_path):
-            try:
-                self.forecasts_df = pd.read_csv(self.forecasts_path)
-                click.secho(f"Loaded {len(self.forecasts_df)} past forecasts from {self.forecasts_path}")
-            except Exception as e:
-                click.secho(f"Error loading existing forecasts: {e}", fg="red")
-                self.forecasts_df = pd.DataFrame()
-        else:
-            self.forecasts_df = pd.DataFrame()
-
-        click.secho("Downloading forecasts from Electricity Maps...", fg="yellow", bold=True)
-        ipForecast = IpOrderAndForecastData()
-        forecast_entries = []
-        if self.update_forecasts:
-            with click.progressbar(self.ip_list, show_eta=True, show_percent=True) as ips:
-                for ipCoord in ips:
-                    forecast_list = ipForecast.fetch_forecast_for_ip(ipCoord)
-                    for idx, forecast in enumerate(forecast_list):
-                        forecast_entries.append({
-                            'timestamp': forecast['timestamp'],
-                            'ci': forecast['ci'],
-                            'ip': forecast['ip'],
-                            'lat': ipCoord.lat,
-                            'lon': ipCoord.lon,
-                            'forecast_idx': idx,
-                            'node_id': ipCoord.node_id
-                        })
-                    click.secho(f"Processed {ipCoord.ip}", fg="blue", dim=True)
-
-            # Convert new forecast entries to a DataFrame
-            new_forecasts_df = pd.DataFrame(forecast_entries)
-
-            # Merge old and new forecasts, then drop duplicates based on timestamp
-            if not self.forecasts_df.empty:
-                self.forecasts_df = pd.concat([self.forecasts_df, new_forecasts_df], ignore_index=True)
-            else:
-                self.forecasts_df = new_forecasts_df
-
-            self.forecasts_df.drop_duplicates(inplace=True)
-
-            # Save updated forecasts
-            self.forecasts_df.to_csv(self.forecasts_path, index=False)
-            click.secho(f"Forecasts saved to {self.forecasts_path}", fg="green", bold=True)
-            click.secho("Forecasts downloaded and processed successfully!", fg="green", bold=True)
+        self.forecasts_df = pd.DataFrame()
+        for _, traceroute in self.nodeid_to_map_traceroutes.items():
+            local_df = self.forecast_service.ips_to_forecasts(traceroute)
+            click.secho(local_df['forecast_idx'].unique())
+            self.forecasts_df = pd.concat([self.forecasts_df, local_df], ignore_index=True)
+        self.forecasts_df.drop_duplicates(inplace=True)
 
     def generate_energy_data(self, mode='time'):
-        tasks = [(node['name'], job['bytes'], job['id'])
-                 for node in self.node_list
-                 for job in self.job_list]
+        # Create tasks for all source-destination routes and jobs
+        tasks = []
+        for route_key in self.simulator.traceroute_data.keys():
+            try:
+                source_node, destination_node = route_key.split('_')
+
+                if source_node not in self.node_map or destination_node not in self.node_map:
+                    click.secho(f"Skipping invalid route {route_key} - nodes not found", fg='yellow')
+                    continue
+
+                if self.node_map[source_node].get('type') != 'source':
+                    continue
+
+                for job in self.job_list:
+                    tasks.append((route_key, job['bytes'], job['id']))
+
+            except ValueError:
+                click.secho(f"Invalid route key format: {route_key}", fg='red')
+                continue
+
+        if not tasks:
+            click.secho("No valid routes found for energy simulation!", fg='red', bold=True)
+            return False
 
         with click.progressbar(
                 length=len(tasks),
@@ -102,142 +88,168 @@ class DataGenerator:
                 fill_char='=',
                 empty_char=' '
         ) as bar:
-            for node_name, job_size, job_id in tasks:
-                self.simulator.run_simulation(node_name=node_name, flows=1, job_size=job_size, job_id=job_id)
-                bar.update(1)
+            for route_key, job_size, job_id in tasks:
+                try:
+                    self.simulator.run_simulation(
+                        node_name=route_key,  # Now passing the full route_key (source_destination)
+                        flows=1,
+                        job_size=job_size,
+                        job_id=job_id
+                    )
+                except Exception as e:
+                    click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
+                finally:
+                    bar.update(1)
 
-    def create_intervals(self, df_path):
-        data_list = []  # Collect data here
+        return True
 
-        # Group by both node_id and forecast_idx to get node-specific carbon intensities
-        node_list = []
-        for node in self.node_list:
-            node_name = node['name']
-            if "macmini" in node_name:
-                continue
-            else:
-                node_list.append(node_name)
-
-        self.forecasts_df = self.forecasts_df[self.forecasts_df['node_id'].isin(node_list)]
-        node_forecast_ci = self.forecasts_df.groupby(['node_id', 'forecast_idx'])['ci'].mean().reset_index()
-
-        # Create a lookup dictionary for faster access
-        ci_lookup = {(row['node_id'], row['forecast_idx']): row['ci']
-                     for _, row in node_forecast_ci.iterrows()}
-
-        # Get all unique forecast indices
-        forecast_indices = self.forecasts_df['forecast_idx'].unique()
-
-        for forecast_idx in forecast_indices:
-            for node_name in node_list:
-                # Get the CI for this node at this forecast index
-                ci_avg = ci_lookup.get((node_name, forecast_idx))
-
-                if ci_avg is None:
-                    # Fallback to global average for this forecast_idx if no node-specific data
-                    ci_avg = self.forecasts_df[self.forecasts_df['forecast_idx'] == forecast_idx]['ci'].mean()
-                    click.secho(f"No CI data for node {node_name} at forecast {forecast_idx}, using global average",
-                                fg="yellow", dim=True)
-
-                for job in self.job_list:
-                    node_job_energy_data = self.simulator.parse_simulation_output(node_name, job['id'])
-                    transfer_time_seconds = node_job_energy_data['transfer_duration']
-                    job_size_bytes = node_job_energy_data['job_size_bytes']
-                    throughput = (job_size_bytes * 8) / transfer_time_seconds  # bps
-                    total_energy = int(node_job_energy_data['total_energy_hosts']) + int(
-                        node_job_energy_data['total_link_energy'])
-                    emissions = self.emissions_for_path_forecast(node_name, job['id'], forecast_idx)
-
-                    # Append data to list
-                    data_list.append({
-                        "node": node_name,
-                        "job_id": job['id'],
-                        "forecast_id": forecast_idx,
-                        "transfer_time": transfer_time_seconds,
-                        "throughput": throughput,
-                        "host_joules": node_job_energy_data['total_energy_hosts'],
-                        "link_joules": node_job_energy_data['total_link_energy'],
-                        "total_joules": total_energy,
-                        "avg_ci": ci_avg,
-                        "carbon_emissions": emissions,
-                        'job_deadline': job['deadline']
-                    })
-
-        # Convert list to DataFrame (efficient)
-        associations_df = pd.DataFrame(data_list)
-        associations_df.to_csv(df_path, index=False)
-        click.secho(f"\nIntervals created successfully path {df_path}", fg="green", bold=True)
-        self.associations_df = associations_df
-        return associations_df
-
-    def emissions_for_path_forecast(self, node_name, job_id, forecast_id):
-        """Calculate CO₂ emissions for a path forecast based on energy consumption and carbon intensity data.
+    def create_intervals_historical(self, df_path):
+        """Create historical intervals with emissions data for all routes and jobs.
 
         Args:
-            node_name: Name of the node
-            job_id: ID of the job
-            forecast_id: ID of the forecast to use for carbon intensity data
+            df_path: Path to save the resulting CSV file
 
         Returns:
-            Total emissions in grams of CO₂ for the path, or None if data is missing
+            DataFrame containing all simulation results with emissions data
         """
-        try:
-            # Construct path - using consistent format with the comment example
-            path = f"../data/energy_consumption_{node_name}_{job_id}_.json"
+        data_list = []
 
-            # Load energy data
-            try:
-                with open(path, 'r') as f:
-                    data = json.load(f)
-            except FileNotFoundError:
-                print(f"Energy consumption file not found: {path}")
-                return None
-            except json.JSONDecodeError:
-                print(f"Invalid JSON in file: {path}")
-                return None
+        # Get all unique source-destination pairs from traceroute data
+        for route_key in self.simulator.traceroute_data.keys():
+            source_node, destination_node = route_key.split('_')
 
-            hosts = data.get('hosts', {})
-            links = data.get('links', {})
+            # Validate nodes exist
+            if source_node not in self.node_map or destination_node not in self.node_map:
+                click.secho(f"Skipping invalid route {route_key} - nodes not found", fg='yellow')
+                continue
 
-            if node_name not in self.nodeid_to_map_traceroutes:
-                print(f"No traceroute data found for node: {node_name}")
-                return None
+            forecast_idx = self.forecasts_df['forecast_idx'].unique()
 
-            node_traceroute = self.nodeid_to_map_traceroutes[node_name]
-            total_emissions_g_co2 = 0.0
-            found_ci_data = False
+            click.secho(f"Processing route: {route_key}", fg='blue')
 
-            for hop in node_traceroute:
-                ip = hop.ip
-                hop_name = self.routers_ip.get(ip, None)
-                if hop_name is None:
+            for job in self.job_list:
+                # Get simulation results using the route_key (source_destination) format
+                energy_json = self.simulator.parse_simulation_output(route_key, job['id'])
+
+                if not energy_json:
+                    click.secho(f"No energy data for {route_key} job {job['id']}", fg='yellow')
                     continue
 
-                link_name = self.links_ip.get(ip, None)
-                if link_name is None:
-                    continue
+                transfer_time_seconds = energy_json['transfer_duration']
+                job_size_bytes = energy_json['job_size_bytes']
+                throughput = (job_size_bytes * 8) / transfer_time_seconds  # bps (avoid division by zero)
+                total_energy = int(energy_json['total_energy_hosts']) + int(energy_json['total_link_energy'])
 
-                host_energy_joules = hosts.get(hop_name, 0.0)
-                link_energy_joules = links.get(link_name, 0.0)
+                # Calculate emissions for each forecast hour
+                for fidx in forecast_idx:
+                    emissions = self.emissions_for_path_forecast(route_key, job['id'], fidx)
 
-                ci_hop = self.forecasts_df[
-                    (self.forecasts_df['forecast_idx'] == forecast_id) &
-                    (self.forecasts_df['node_id'] == node_name) &
+                    if emissions is None:
+                        click.secho(f"Warning: No emissions data for {route_key} job {job['id']} forecast {fidx}",
+                                    fg='yellow')
+                        continue
+
+                    data_list.append({
+                        "source_node": source_node,
+                        "destination_node": destination_node,
+                        "route_key": route_key,
+                        "job_id": job['id'],
+                        "forecast_id": fidx,
+                        "transfer_time": transfer_time_seconds,
+                        "throughput": throughput,
+                        "host_joules": energy_json['total_energy_hosts'],
+                        "link_joules": energy_json['total_link_energy'],
+                        "total_joules": total_energy,
+                        "carbon_emissions": emissions,
+                        'job_deadline': job['deadline'],
+                        'source_cpu': self.node_map[source_node]['CPU'],
+                        'source_ram': self.node_map[source_node]['total_ram'],
+                        'source_nic_speed': self.node_map[source_node]['NIC_SPEED'],
+                        'destination_cpu': self.node_map[destination_node]['CPU'],
+                        'destination_ram': self.node_map[destination_node]['total_ram'],
+                        'destination_nic_speed': self.node_map[destination_node]['NIC_SPEED'],
+                    })
+
+        # Create DataFrame and save results
+        associations_df = pd.DataFrame(data_list)
+
+        # Calculate additional metrics
+        associations_df['throughput_gbps'] = associations_df['throughput'] / 1e9
+        associations_df['transfer_time_hours'] = associations_df['transfer_time'] / 3600
+
+        # Save to CSV
+        associations_df.to_csv(df_path, index=False)
+        click.secho(f"\nIntervals created successfully at {df_path}", fg="green", bold=True)
+        self.associations_df = associations_df
+
+        return associations_df
+
+    def emissions_for_path_forecast(self, route_key, job_id, forecast_id):
+        """Calculate CO₂ emissions for a path forecast."""
+        # Load energy data
+        path = f"/workspace/data/energy_consumption_{route_key}_{job_id}_.json"
+        with open(path, 'r') as f:
+            data = json.load(f)
+
+        # Get transfer duration
+        transfer_duration = data['transfer_duration']
+        transfer_hours = transfer_duration / 3600
+        num_hours = min(math.ceil(transfer_hours), 24)
+
+        # Get source node and traceroute
+        source_node = route_key.split('_')[0]
+        destination_name = route_key.split('_')[1]
+        traceroute = self.nodeid_to_map_traceroutes[route_key]
+
+        # Get route-specific mappings
+        route_routers = self.routers_ip.get(route_key)
+        route_links = self.links_ip.get(route_key)
+
+        total_emissions = 0.0
+
+        for i, hop in enumerate(traceroute):
+            ip = hop.ip
+            # Determine component names
+            if i == 0:  # Source node
+                host_name = source_node
+                link_name = None
+            elif i == len(traceroute) - 1:  # Destination node
+                host_name = destination_name
+                link_name = None
+            else:  # Router node
+                host_name = route_routers.get(ip, f"router_{route_key}_{i}")
+                link_name = route_links.get(ip, f"link_{route_key}_{i}")
+
+            # Get energy values
+            host_energy = data['hosts'].get(host_name)
+            link_energy = data['links'].get(link_name, 0.0)
+            total_energy = host_energy + link_energy
+
+            # Calculate hourly emissions
+            hourly_energy = total_energy / transfer_hours
+            hop_emissions = 0.0
+
+            for hour_offset in range(num_hours):
+                current_fidx = (forecast_id + hour_offset) % 24
+
+                # Get CI data
+                ci_data = self.forecasts_df[
+                    (self.forecasts_df['forecast_idx'] == current_fidx) &
                     (self.forecasts_df['ip'] == ip)
                     ]
-                if not ci_hop.empty:
-                    ci_value = ci_hop.iloc[0]['ci']  # gCO₂/kWh
-                    # Convert energy (J) to kWh
-                    total_energy_kwh = (host_energy_joules + link_energy_joules) / 3.6e6
-                    # Compute emissions in grams of CO₂
-                    emissions_g_co2 = total_energy_kwh * ci_value
-                    total_emissions_g_co2 += emissions_g_co2
-                    found_ci_data = True
+
+                print(ci_data.iloc[0])
+                ci_value = ci_data.iloc[0]['ci']
+                if hour_offset == num_hours - 1:  # Partial last hour
+                    hour_frac = transfer_hours - (num_hours - 1)
+                    energy_kwh = (hourly_energy * hour_frac) / 3.6e6
                 else:
-                    print(f"CI data not found for hop {ip}")
+                    energy_kwh = hourly_energy / 3.6e6
 
-            return total_emissions_g_co2 if found_ci_data else None
+                hop_emissions += energy_kwh * ci_value
 
-        except Exception as e:
-            print(f"Error calculating emissions: {str(e)}")
-            return None
+            total_emissions += hop_emissions
+
+        if total_emissions is None or total_emissions == 0.0:
+            click.secho(f"{route_key}, {job_id}, {forecast_id}")
+        return total_emissions
