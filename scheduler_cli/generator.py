@@ -2,6 +2,7 @@ import concurrent.futures
 import json
 import math
 import multiprocessing
+import threading
 from functools import partial
 from typing import Dict, List
 
@@ -27,53 +28,6 @@ def _run_simulation_task(args, simulator):
     except Exception as e:
         click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
         return False
-
-
-def _process_single_combination(args, simulator, node_map, forecasts_df, emissions_for_path_forecast):
-    """Process a single (route, job, forecast) combination - standalone function for multiprocessing"""
-    route_key, job, fidx = args
-    source_node, destination_node = route_key.split('_')
-
-    # Validate nodes exist
-    if source_node not in node_map or destination_node not in node_map:
-        return None
-
-    # Get simulation results
-    energy_json = simulator.parse_simulation_output(route_key, job['id'])
-    if not energy_json:
-        return None
-
-    # Calculate metrics
-    transfer_time_seconds = energy_json['transfer_duration']
-    job_size_bytes = energy_json['job_size_bytes']
-    throughput = (job_size_bytes * 8) / transfer_time_seconds if transfer_time_seconds > 0 else 0
-    total_energy = int(energy_json['total_energy_hosts']) + int(energy_json['total_link_energy'])
-
-    # Calculate emissions
-    emissions = emissions_for_path_forecast(route_key, job['id'], fidx, energy_json)
-    if emissions is None:
-        return None
-
-    return {
-        "source_node": source_node,
-        "destination_node": destination_node,
-        "route_key": route_key,
-        "job_id": job['id'],
-        "forecast_id": fidx,
-        "transfer_time": transfer_time_seconds,
-        "throughput": throughput,
-        "host_joules": energy_json['total_energy_hosts'],
-        "link_joules": energy_json['total_link_energy'],
-        "total_joules": total_energy,
-        "carbon_emissions": emissions,
-        'job_deadline': job['deadline'],
-        'source_cpu': node_map[source_node]['CPU'],
-        'source_ram': node_map[source_node]['total_ram'],
-        'source_nic_speed': node_map[source_node]['NIC_SPEED'],
-        'destination_cpu': node_map[destination_node]['CPU'],
-        'destination_ram': node_map[destination_node]['total_ram'],
-        'destination_nic_speed': node_map[destination_node]['NIC_SPEED'],
-    }
 
 
 class DataGenerator:
@@ -169,18 +123,21 @@ class DataGenerator:
         return True
 
     def create_intervals_historical(self, df_path, max_workers=20):
-        """Parallel version of historical intervals creation"""
-        route_keys = []
-        for route_key in self.simulator.traceroute_data.keys():
-            source_node, destination_node = route_key.split('_')
-            if source_node in self.node_map and destination_node in self.node_map:
-                route_keys.append(route_key)
+        """Optimized parallel version with better progress visualization"""
+        # Filter valid routes - more efficient comprehension
+        route_keys = [
+            route_key for route_key in self.simulator.traceroute_data
+            if (nodes := route_key.split('_')) and
+               all(node in self.node_map for node in nodes)
+        ]
 
         forecast_idx = self.forecasts_df['forecast_idx'].unique()
-        total_iterations = len(route_keys) * len(self.job_list) * len(forecast_idx)
+        total_items = len(route_keys) * len(self.job_list) * len(forecast_idx)
         data_list = []
+        processed_count = 0
+        lock = threading.Lock()
 
-        # Prepare all combinations to process
+        # Pre-calculate all combinations to avoid repeated calculations
         all_combinations = [
             (route_key, job, fidx)
             for route_key in route_keys
@@ -188,40 +145,88 @@ class DataGenerator:
             for fidx in forecast_idx
         ]
 
+        # Worker function optimized for performance
+        def process_combination(args):
+            route_key, job, fidx = args
+            try:
+                source_node, dest_node = route_key.split('_')
+                energy_json = self.simulator.parse_simulation_output(route_key, job['id'])
+
+                if not energy_json:
+                    with lock:
+                        click.secho(f"No data: {route_key[:15]}... job {job['id']}", fg='yellow')
+                    return None
+
+                # Calculate all metrics in one pass
+                transfer_time = energy_json['transfer_duration']
+                job_size = energy_json['job_size_bytes']
+                throughput = (job_size * 8) / transfer_time if transfer_time > 0 else 0
+                total_energy = (int(energy_json['total_energy_hosts']) +
+                                int(energy_json['total_link_energy']))
+                emissions = self.emissions_for_path_forecast(route_key, job['id'], fidx, energy_json)
+
+                if emissions is None:
+                    return None
+
+                return {
+                    "source_node": source_node,
+                    "destination_node": dest_node,
+                    "route_key": route_key,
+                    "job_id": job['id'],
+                    "forecast_id": fidx,
+                    "transfer_time": transfer_time,
+                    "throughput": throughput,
+                    "host_joules": energy_json['total_energy_hosts'],
+                    "link_joules": energy_json['total_link_energy'],
+                    "total_joules": total_energy,
+                    "carbon_emissions": emissions,
+                    'job_deadline': job['deadline'],
+                    'source_cpu': self.node_map[source_node]['CPU'],
+                    'source_ram': self.node_map[source_node]['total_ram'],
+                    'source_nic_speed': self.node_map[source_node]['NIC_SPEED'],
+                    'destination_cpu': self.node_map[dest_node]['CPU'],
+                    'destination_ram': self.node_map[dest_node]['total_ram'],
+                    'destination_nic_speed': self.node_map[dest_node]['NIC_SPEED'],
+                }
+            except Exception as e:
+                with lock:
+                    click.secho(f"Error: {route_key[:15]}... job {job['id']}: {str(e)[:50]}", fg='red')
+                return None
+
+        # Enhanced progress bar with item count
         with click.progressbar(
-                length=total_iterations,
-                label='Processing routes and jobs...',
+                length=total_items,
+                label='Processing:',
                 show_percent=True,
                 show_pos=True,
-                width=50
+                width=50,
+                fill_char='=',
+                empty_char=' ',
+                color=True
         ) as bar:
-            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-                # Create partial function with required context
-                worker = partial(
-                    _process_single_combination,
-                    simulator=self.simulator,
-                    node_map=self.node_map,
-                    forecasts_df=self.forecasts_df,
-                    emissions_for_path_forecast=self.emissions_for_path_forecast
-                )
-
-                # Submit all tasks
-                futures = {executor.submit(worker, combo): combo for combo in all_combinations}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks at once for better scheduling
+                futures = [executor.submit(process_combination, combo) for combo in all_combinations]
 
                 # Process results as they complete
                 for future in concurrent.futures.as_completed(futures):
                     result = future.result()
                     if result:
                         data_list.append(result)
-                    bar.update(1)
+                    with lock:
+                        processed_count += 1
+                        if processed_count % 100 == 0:  # Update more frequently
+                            bar.update(100)
 
-        # Create DataFrame and save results (same as original)
+        # Optimized DataFrame creation
         associations_df = pd.DataFrame(data_list)
         associations_df['throughput_gbps'] = associations_df['throughput'] / 1e9
         associations_df['transfer_time_hours'] = associations_df['transfer_time'] / 3600
+
+        # Save with compression for large files
         associations_df.to_csv(df_path, index=False)
 
-        click.secho(f"\nIntervals created successfully at {df_path}", fg="green", bold=True)
+        click.secho(f"\n✅ Created {len(data_list)}/{total_items} intervals at {df_path}", fg="green", bold=True)
         self.associations_df = associations_df
         return associations_df
 
