@@ -12,6 +12,7 @@ from models import get_unique_ips, IpToLonAndLat, process_pmeter_tr
 from simgrid_simulator import SimGridSimulator
 from zone_discovery import HistoricalForecastService
 
+
 def _run_simulation_task(args, simulator):
     """Standalone function that can be pickled for multiprocessing"""
     route_key, job_size, job_id = args
@@ -26,6 +27,54 @@ def _run_simulation_task(args, simulator):
     except Exception as e:
         click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
         return False
+
+
+def _process_single_combination(args, simulator, node_map, forecasts_df, emissions_for_path_forecast):
+    """Process a single (route, job, forecast) combination - standalone function for multiprocessing"""
+    route_key, job, fidx = args
+    source_node, destination_node = route_key.split('_')
+
+    # Validate nodes exist
+    if source_node not in node_map or destination_node not in node_map:
+        return None
+
+    # Get simulation results
+    energy_json = simulator.parse_simulation_output(route_key, job['id'])
+    if not energy_json:
+        return None
+
+    # Calculate metrics
+    transfer_time_seconds = energy_json['transfer_duration']
+    job_size_bytes = energy_json['job_size_bytes']
+    throughput = (job_size_bytes * 8) / transfer_time_seconds if transfer_time_seconds > 0 else 0
+    total_energy = int(energy_json['total_energy_hosts']) + int(energy_json['total_link_energy'])
+
+    # Calculate emissions
+    emissions = emissions_for_path_forecast(route_key, job['id'], fidx, energy_json)
+    if emissions is None:
+        return None
+
+    return {
+        "source_node": source_node,
+        "destination_node": destination_node,
+        "route_key": route_key,
+        "job_id": job['id'],
+        "forecast_id": fidx,
+        "transfer_time": transfer_time_seconds,
+        "throughput": throughput,
+        "host_joules": energy_json['total_energy_hosts'],
+        "link_joules": energy_json['total_link_energy'],
+        "total_joules": total_energy,
+        "carbon_emissions": emissions,
+        'job_deadline': job['deadline'],
+        'source_cpu': node_map[source_node]['CPU'],
+        'source_ram': node_map[source_node]['total_ram'],
+        'source_nic_speed': node_map[source_node]['NIC_SPEED'],
+        'destination_cpu': node_map[destination_node]['CPU'],
+        'destination_ram': node_map[destination_node]['total_ram'],
+        'destination_nic_speed': node_map[destination_node]['NIC_SPEED'],
+    }
+
 
 class DataGenerator:
 
@@ -119,31 +168,25 @@ class DataGenerator:
 
         return True
 
-    def create_intervals_historical(self, df_path):
-        """Create historical intervals with emissions data for all routes and jobs.
-
-        Args:
-            df_path: Path to save the resulting CSV file
-
-        Returns:
-            DataFrame containing all simulation results with emissions data
-        """
-        data_list = []
-
-        # Get all unique source-destination pairs from traceroute data
-        route_keys = list(self.simulator.traceroute_data.keys())
-        route_key_to_process = []
-        for route_key in route_keys:
-            source_node = route_key.split("_")[0]
-            destination_node = route_key.split("_")[1]
-            if source_node not in self.node_map or destination_node not in self.node_map:
-                continue
-            route_key_to_process.append(route_key)
+    def create_intervals_historical(self, df_path, max_workers=20):
+        """Parallel version of historical intervals creation"""
+        route_keys = []
+        for route_key in self.simulator.traceroute_data.keys():
+            source_node, destination_node = route_key.split('_')
+            if source_node in self.node_map and destination_node in self.node_map:
+                route_keys.append(route_key)
 
         forecast_idx = self.forecasts_df['forecast_idx'].unique()
+        total_iterations = len(route_keys) * len(self.job_list) * len(forecast_idx)
+        data_list = []
 
-        # Calculate total iterations for progress bar
-        total_iterations = len(route_key_to_process) * len(self.job_list) * len(forecast_idx)
+        # Prepare all combinations to process
+        all_combinations = [
+            (route_key, job, fidx)
+            for route_key in route_keys
+            for job in self.job_list
+            for fidx in forecast_idx
+        ]
 
         with click.progressbar(
                 length=total_iterations,
@@ -152,77 +195,34 @@ class DataGenerator:
                 show_pos=True,
                 width=50
         ) as bar:
-            for route_key in route_key_to_process:
-                source_node, destination_node = route_key.split('_')
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Create partial function with required context
+                worker = partial(
+                    _process_single_combination,
+                    simulator=self.simulator,
+                    node_map=self.node_map,
+                    forecasts_df=self.forecasts_df,
+                    emissions_for_path_forecast=self.emissions_for_path_forecast
+                )
 
-                # Validate nodes exist
-                if source_node not in self.node_map or destination_node not in self.node_map:
-                    click.secho(f"Skipping invalid route {route_key} - nodes not found", fg='yellow')
-                    # Advance progress bar for the skipped route
-                    bar.update(len(self.job_list) * len(forecast_idx))
-                    continue
+                # Submit all tasks
+                futures = {executor.submit(worker, combo): combo for combo in all_combinations}
 
-                click.secho(f"Processing route: {route_key}", fg='blue')
+                # Process results as they complete
+                for future in concurrent.futures.as_completed(futures):
+                    result = future.result()
+                    if result:
+                        data_list.append(result)
+                    bar.update(1)
 
-                for job in self.job_list:
-                    # Get simulation results using the route_key (source_destination) format
-                    energy_json = self.simulator.parse_simulation_output(route_key, job['id'])
-
-                    if not energy_json:
-                        click.secho(f"No energy data for {route_key} job {job['id']}", fg='yellow')
-                        # Advance progress bar for the skipped job
-                        bar.update(len(forecast_idx))
-                        continue
-
-                    transfer_time_seconds = energy_json['transfer_duration']
-                    job_size_bytes = energy_json['job_size_bytes']
-                    throughput = (job_size_bytes * 8) / transfer_time_seconds  # bps (avoid division by zero)
-                    total_energy = int(energy_json['total_energy_hosts']) + int(energy_json['total_link_energy'])
-
-                    # Calculate emissions for each forecast hour
-                    for fidx in forecast_idx:
-                        emissions = self.emissions_for_path_forecast(route_key, job['id'], fidx, energy_json)
-
-                        if emissions is None:
-                            click.secho(f"Warning: No emissions data for {route_key} job {job['id']} forecast {fidx}",
-                                        fg='yellow')
-                            bar.update(1)
-                            continue
-
-                        data_list.append({
-                            "source_node": source_node,
-                            "destination_node": destination_node,
-                            "route_key": route_key,
-                            "job_id": job['id'],
-                            "forecast_id": fidx,
-                            "transfer_time": transfer_time_seconds,
-                            "throughput": throughput,
-                            "host_joules": energy_json['total_energy_hosts'],
-                            "link_joules": energy_json['total_link_energy'],
-                            "total_joules": total_energy,
-                            "carbon_emissions": emissions,
-                            'job_deadline': job['deadline'],
-                            'source_cpu': self.node_map[source_node]['CPU'],
-                            'source_ram': self.node_map[source_node]['total_ram'],
-                            'source_nic_speed': self.node_map[source_node]['NIC_SPEED'],
-                            'destination_cpu': self.node_map[destination_node]['CPU'],
-                            'destination_ram': self.node_map[destination_node]['total_ram'],
-                            'destination_nic_speed': self.node_map[destination_node]['NIC_SPEED'],
-                        })
-                        bar.update(1)
-
-        # Create DataFrame and save results
+        # Create DataFrame and save results (same as original)
         associations_df = pd.DataFrame(data_list)
-
-        # Calculate additional metrics
         associations_df['throughput_gbps'] = associations_df['throughput'] / 1e9
         associations_df['transfer_time_hours'] = associations_df['transfer_time'] / 3600
-
-        # Save to CSV
         associations_df.to_csv(df_path, index=False)
-        click.secho(f"\n Intervals created successfully at {df_path}", fg="green", bold=True)
-        self.associations_df = associations_df
 
+        click.secho(f"\nIntervals created successfully at {df_path}", fg="green", bold=True)
+        self.associations_df = associations_df
         return associations_df
 
     def emissions_for_path_forecast(self, route_key, job_id, forecast_id, energy_data):
