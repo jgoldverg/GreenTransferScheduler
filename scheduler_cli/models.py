@@ -9,11 +9,13 @@ import requests
 
 
 class PlanAlgorithm(Enum):
+    GNN_CARBON_MIND = "gnn"
     EARLIEST_DEADLINE_FIRST = "edf"
     SHORTEST_JOB_FIRST = "sjf"
     WORST_CASE = "worst"
     BRUTE_FORCE_GREEN_CASE = "green"
-    LINEAR_PROGRAMMING_GREEN = "milp_green"
+    MILP_NORM = "milp_norm"
+    MILP_BINARY = "milp_binary"
     ALL = "all"
     ROUND_ROBIN = "rr"
 

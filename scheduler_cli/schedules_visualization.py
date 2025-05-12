@@ -1,8 +1,7 @@
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List
 import pandas as pd
 from rich.console import Console
-import rich
 from rich.table import Table
 from scheduler_algo import PlanAlgorithm
 
@@ -106,21 +105,30 @@ class ScheduleVisualization:
         return job_bytes
 
     def _calculate_efficiency_stats(self, schedule_df: pd.DataFrame, job_stats: Dict) -> Dict:
-        """Calculate efficiency and environmental metrics."""
-        total_carbon = schedule_df['carbon_emissions'].sum()
-        avg_throughput = schedule_df['throughput'].mean()
-        total_time = schedule_df['allocated_time'].sum()
+        """Improved efficiency metrics calculation"""
+        total_carbon = schedule_df['carbon_emissions'].sum() / 1000
 
-        # Calculate completed bytes from job_stats
+        # Weight throughput by job size
+        weighted_throughput = sum(
+            row['throughput'] * (self.job_requirements[row['job_id']] / self.total_bytes_required)
+            for _, row in schedule_df.iterrows()
+        )
+
+        # Calculate completed bytes properly
         completion_pct = float(job_stats['Completion %'].strip('%')) / 100
-        completed_bytes = self.total_bytes_required * completion_pct
+        completed_gb = (self.total_bytes_required * completion_pct) / 1e9
+
+        # Calculate total active time (not sum of allocations)
+        active_slots = schedule_df.groupby('forecast_id').size()
+        total_time = len(active_slots) * 3600 if not active_slots.empty else 0
 
         return {
-            'Carbon (kgCO₂)': f"{total_carbon / 1000:.2f}",
-            'Avg Throughput': f"{avg_throughput / 1e9:.2f} Gbps",
+            'Carbon (kgCO₂)': f"{total_carbon:.2f}",
+            'Avg Throughput': f"{weighted_throughput / 1e9:.2f} Gbps",
             'Total Time': f"{total_time:.2f} sec",
-            'Carbon/GB': f"{(total_carbon * 1e9) / completed_bytes:.2f}" if completed_bytes > 0 else "N/A",
-            'Efficiency': f"{completed_bytes / total_time / 1e6:.2f} MB/s" if total_time > 0 else "N/A"
+            'Carbon/GB': f"{total_carbon / completed_gb:.2f}" if completed_gb > 0 else "N/A",
+            'Efficiency': f"{(self.total_bytes_required * completion_pct) / total_time / 1e6:.2f} MB/s"
+            if total_time > 0 else "N/A"
         }
 
     def _print_comparison_table(self, comparison_df: pd.DataFrame):

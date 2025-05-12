@@ -29,15 +29,15 @@ static void sender(std::vector<std::string> args) {
     long remainder = comm_size % flow_amount;
 
     // Simulate buffer preparation
-    double buffer_prep_work = comm_size * 1;
-    sg4::this_actor::execute(buffer_prep_work);
-    XBT_INFO("Buffer preparation completed");
+//    double buffer_prep_work = comm_size * 1;
+//    sg4::this_actor::execute(buffer_prep_work);
+//    XBT_INFO("Buffer preparation completed");
 
     sg4::ActivitySet comms;
     for (int i = 0; i < flow_amount; i++) {
         long this_chunk_size = (i == flow_amount - 1) ? chunk_size + remainder : chunk_size;
-        double buffer_copy_work = this_chunk_size * 1;
-        sg4::this_actor::execute(buffer_copy_work);
+//        double buffer_copy_work = this_chunk_size * 1;
+//        sg4::this_actor::execute(buffer_copy_work);
 
         XBT_INFO("Flow %d sending %ld bytes", i, this_chunk_size);
         comms.push(mailbox->put_async(bprintf("%d", i), this_chunk_size));
@@ -63,8 +63,8 @@ static void receiver(std::vector<std::string> args) {
 
     for (int i = 0; i < flow_amount; i++) {
         long this_chunk_size = strlen(data[i]) + 1;
-        double buffer_process_work = this_chunk_size * 1;
-        sg4::this_actor::execute(buffer_process_work);
+//        double buffer_process_work = this_chunk_size * 1;
+//        sg4::this_actor::execute(buffer_process_work);
         XBT_INFO("Flow %d received %ld bytes", i, sizeof(data[i]));
         xbt_free(data[i]);
     }

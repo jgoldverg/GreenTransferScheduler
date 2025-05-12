@@ -1,6 +1,5 @@
 from typing import List
 
-import click
 import geopandas as gpd
 import pandas as pd
 from models import IpToLonAndLat
@@ -9,9 +8,9 @@ from rich.console import Console
 
 class HistoricalForecastService:
 
-    def __init__(self, forecast_start_utc, forecast_days, path_geojson, df_ci_path):
+    def __init__(self, forecast_start_utc, forecast_length, path_geojson, df_ci_path):
         self.forecast_start = pd.to_datetime(forecast_start_utc, utc=True)
-        self.forecast_end = self.forecast_start + pd.Timedelta(days=forecast_days)
+        self.forecast_end = self.forecast_start + pd.Timedelta(hours=forecast_length)
         self.geo_df = gpd.read_file(path_geojson)
         self.console = Console()
         self.df_ci = pd.read_csv(df_ci_path, index_col=False)

@@ -1,7 +1,0 @@
-Algorithm,Jobs Completed,Completion %,Total Bytes,Deadline Met,On Time %,Carbon (kgCO₂),Avg Throughput,Schedule Time (sec),Carbon/GB
-edf,146/150,35.0%,8619.73GB,146/146,100.0%,35.94,0.39 Gbps,76968.27 sec,4.17 gCO₂/GB
-sjf,146/150,27.3%,6706.98GB,146/146,100.0%,17.08,0.38 Gbps,60212.93 sec,2.55 gCO₂/GB
-worst,23/150,33.3%,8192.48GB,23/23,100.0%,77.06,0.83 Gbps,618738.75 sec,9.41 gCO₂/GB
-green,147/150,39.3%,9676.76GB,147/147,100.0%,49.50,0.42 Gbps,417968.26 sec,5.12 gCO₂/GB
-milp_green,148/150,59.1%,14549.23GB,148/148,100.0%,40.76,0.43 Gbps,492113.89 sec,2.80 gCO₂/GB
-rr,147/150,39.3%,9676.76GB,147/147,100.0%,44.26,0.42 Gbps,86237.64 sec,4.57 gCO₂/GB

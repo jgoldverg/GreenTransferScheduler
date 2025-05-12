@@ -6,8 +6,8 @@ import pandas as pd
 from models import read_in_node_file, read_in_job_file, read_in_node_list_to_map, PlanAlgorithm
 from algos.shortest_job_first import ShortestJobFirst
 from algos.earliest_deadline_first import EarliestDeadlineFirst
-
-from algos.milp_green import MixedIntegerLinearProgrammingGreenPlanner
+from algos.gnn_algo import GnnPlanner
+from algos.milp_green import MilpGreenPlanner, LexicographicGreenPlanner
 from algos.greedy_carbon_planner import CarbonAwarePlanner
 from algos.round_robin import RoundRobin
 from schedules_visualization import ScheduleVisualization
@@ -86,9 +86,11 @@ def planner_factory(algo: PlanAlgorithm, *args, **kwargs):
     planners = {
         PlanAlgorithm.WORST_CASE: CarbonAwarePlanner,
         PlanAlgorithm.BRUTE_FORCE_GREEN_CASE: CarbonAwarePlanner,
-        PlanAlgorithm.LINEAR_PROGRAMMING_GREEN: MixedIntegerLinearProgrammingGreenPlanner,
+        # PlanAlgorithm.MILP_NORM: LexicographicGreenPlanner,
+        PlanAlgorithm.MILP_BINARY: MilpGreenPlanner,
         PlanAlgorithm.ROUND_ROBIN: RoundRobin,
         PlanAlgorithm.SHORTEST_JOB_FIRST: ShortestJobFirst,
         PlanAlgorithm.EARLIEST_DEADLINE_FIRST: EarliestDeadlineFirst,
+        PlanAlgorithm.GNN_CARBON_MIND: GnnPlanner
     }
     return planners[PlanAlgorithm(algo)](*args, **kwargs)  # Instantiate the selected planner

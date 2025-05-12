@@ -33,23 +33,23 @@ class SimGridSimulator:
         # Energy profile configurations
         ENERGY_PROFILES = {
             'core_router': {
-                'wattage_per_state': "100.0:500.0:1000.0",
+                'wattage_per_state': "500:1000:1500",
                 'wattage_off': "10.0",
-                'speed': "100Gf",
-                'cores': "8"
+                'speed': "10Gf",  # Reduced for routing efficiency
+                'cores': "1"
             },
             'edge_router': {
-                'wattage_per_state': "50.0:275.0:500.0",
+                'wattage_per_state': "50:200:400",
                 'wattage_off': "5.0",
-                'speed': "50Gf",
-                'cores': "4"
+                'speed': "1Gf",
+                'cores': "1"
             },
             'backbone_link': {
-                'wattage_range': "100.0:200.0",
+                'wattage_range': "100:200",
                 'wattage_off': "15.0"
             },
             'standard_link': {
-                'wattage_range': "80.0:130.0",
+                'wattage_range': "50:100",
                 'wattage_off': "10.0"
             }
         }
@@ -91,7 +91,7 @@ class SimGridSimulator:
                     profile = {
                         'speed': f"{float(node_data['gf']) * 1e9:.0f}f",
                         'cores': str(node_data['CPU']),
-                        'wattage_per_state': f"{node_data['power']['min']}:{(node_data['power']['max'] + node_data['power']['min']) / 2}:{node_data['power']['max']}",
+                        'wattage_per_state': f"{node_data['power']['min']}:{node_data['power']['max']}",
                         'wattage_off': "5.0"
                     }
                 elif i == len(traceroute) - 1:  # Destination node
@@ -100,13 +100,13 @@ class SimGridSimulator:
                     profile = {
                         'speed': f"{float(node_data['gf']) * 1e9:.0f}f",
                         'cores': str(node_data['CPU']),
-                        'wattage_per_state': f"{node_data['power']['min']}:{(node_data['power']['max'] + node_data['power']['min']) / 2}:{node_data['power']['max']}",
+                        'wattage_per_state': f"{node_data['power']['min']}:{node_data['power']['max']}",
                         'wattage_off': "5.0"
                     }
                 else:  # Intermediate router
                     router_id = f"router_{route_key}_{i}"
                     profile = ENERGY_PROFILES['core_router' if is_backbone else 'edge_router']
-                    routers[hop.ip] = router_id  # Store route-specific mapping
+                    routers[hop.ip] = router_id
 
                 # Create router element
                 router = ET.SubElement(
@@ -118,23 +118,33 @@ class SimGridSimulator:
                 ET.SubElement(router, "prop", id="wattage_per_state", value=profile['wattage_per_state'])
                 ET.SubElement(router, "prop", id="wattage_off", value=profile['wattage_off'])
 
-                if i not in [0, len(traceroute) - 1]:  # Mark as router
+                if i not in [0, len(traceroute) - 1]:
                     ET.SubElement(router, "prop", id="is_router", value="true")
 
-                # Create links
+                # Create links (skip for first hop)
                 if i > 0:
                     link_id = f"link_{route_key}_{i}"
-                    links[hop.ip] = link_id  # Store route-specific mapping
-                    prev_hop = traceroute[i - 1]
+                    links[hop.ip] = link_id
                     prev_router_id = destination_node if i == 1 else f"router_{route_key}_{i - 1}"
                     xml_links.append((prev_router_id, router_id, link_id))
+
+                    # Calculate per-hop latency
+                    hop_latency = max(0.1, (hop.rtt - traceroute[i - 1].rtt) * 1000)  # ms
+
+                    # Determine bandwidth
+                    if i == 1:  # First hop from source
+                        bandwidth = self.node_map[source_node]['NIC_SPEED']
+                    elif i == len(traceroute) - 1:  # Last hop to destination
+                        bandwidth = self.node_map[destination_node]['NIC_SPEED']
+                    else:  # Intermediate links
+                        bandwidth = "100Gbps" if is_backbone else "10Gbps"
 
                     link_profile = ENERGY_PROFILES['backbone_link' if is_backbone else 'standard_link']
                     link = ET.SubElement(
                         zone, "link",
                         id=link_id,
-                        bandwidth=self._determine_bandwidth(i, len(traceroute), source_node, is_backbone),
-                        latency=f"{hop.rtt * 1000:.2f}ms",
+                        bandwidth=bandwidth,
+                        latency=f"{hop_latency:.2f}ms",
                         sharing_policy="SHARED"
                     )
                     ET.SubElement(link, "prop", id="wattage_range", value=link_profile['wattage_range'])

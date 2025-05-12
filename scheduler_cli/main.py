@@ -18,13 +18,13 @@ def scheduler_cli():
 
 @scheduler_cli.command()
 @click.option('-t', '--trace', type=click.Path(),
-              default='/workspace/config/traceroutes/pmeter_tr',
+              default='/workspace/config/traceroutes/pmeter_tr/',
               show_default=True,
               help="Path to the trace route file.")
-@click.option('-s', '--forecast_start', type=click.DateTime(), default='2024-01-01 00:00:00',
+@click.option('-s', '--forecast_start', type=click.DateTime(), default='2024-03-11T00:00:00',
               help="The start of the forecast you wish to use.", show_default=True)
-@click.option('-e', '--forecast_end', type=click.INT, default=1,
-              help="The number of days you wish the forecast to cover", show_default=True)
+@click.option('-e', '--forecast_length', type=click.INT, default=71,
+              help="The number of hours you wish to forecast ahead", show_default=True)
 @click.option('-j', '--jobs', type=click.Path(),
               default='../config/jobs_config/9_jobs.json',
               show_default=True,
@@ -43,10 +43,10 @@ def scheduler_cli():
 @click.option('-h', '--historical_ci_path', type=click.Path(),
               default='/workspace/data/historical_data/2024_ZONES_DF.csv',
               show_default=True, help='The Electricity maps historical csv to use')
-def gen(forecast_start, forecast_end, trace, jobs, nodes, df, geojson_path, historical_ci_path):
+def gen(forecast_start, forecast_length, trace, jobs, nodes, df, geojson_path, historical_ci_path):
     click.secho("\n⚙️ Associations Df creation parameters:", fg="cyan", bold=True)
     click.secho(f"  • Forecast Start date: {click.style(forecast_start, fg='yellow')}")
-    click.secho(f"  • Forecast Length(days) date: {click.style(forecast_end, fg='yellow')}")
+    click.secho(f"  • Forecast Length(hours) date: {click.style(forecast_length, fg='yellow')}")
     click.secho(f"  • Geojson path to use: {click.style(geojson_path, fg='yellow')}")
     click.secho(f"  • Historical CI path to use: {click.style(historical_ci_path, fg='yellow')}")
     click.secho(f"  • Trace Route: {click.style(trace, fg='yellow')}")
@@ -56,10 +56,10 @@ def gen(forecast_start, forecast_end, trace, jobs, nodes, df, geojson_path, hist
 
     click.secho("\n✅ Starting data generation...", fg="green")
 
-    forecast_service = HistoricalForecastService(forecast_start_utc=forecast_start, forecast_days=forecast_end,
+    forecast_service = HistoricalForecastService(forecast_start_utc=forecast_start, forecast_length=forecast_length,
                                                  path_geojson=geojson_path, df_ci_path=historical_ci_path)
     scheduler_algo = DataGenerator(node_file_path=nodes, ip_list_file_path=trace, job_file_path=jobs,
-                                   forecast_service=forecast_service)
+                                   forecast_service=forecast_service, forecast_len=forecast_length)
     scheduler_algo.prepare_fields()
     scheduler_algo.load_in_forecasts()
     # scheduler_algo.generate_energy_data()
@@ -109,7 +109,7 @@ def generate_job_config(num_of_jobs, job_output_path, deadline_end):
 
     click.echo(f"Generated {num_of_jobs} jobs with:")
     click.echo(f"- Total data: {total_size / 10 ** 12:.2f} TB")
-    click.echo(f"- Deadline range: 1-25 hours")
+    click.echo(f"- Deadline range: 1-{deadline_end} hours")
     click.echo(f"Saved to: {output_file}")
 
 

@@ -8,3 +8,6 @@ seaborn
 pulp
 geopandas
 watttime
+torch
+torch-geometric
+typing_extensions

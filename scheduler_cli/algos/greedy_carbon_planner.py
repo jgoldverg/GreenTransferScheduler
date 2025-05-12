@@ -1,37 +1,51 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict
 import pandas as pd
 
 
 class CarbonAwarePlanner:
-    def __init__(self, associations_df: pd.DataFrame, jobs: List[Dict],
-                 mode: str = 'min'):
+    def __init__(self, associations_df: pd.DataFrame, jobs: List[Dict], mode: str = 'min'):
         self.df = associations_df
         self.mode = mode.lower()
         self.job_list = jobs
         self.reverse_sort = (self.mode == 'max')
 
-        # Initialize capacity tracking for routes (source-destination pairs)
-        self.routes = associations_df[['source_node', 'destination_node']].drop_duplicates()
+        # Initialize capacity tracking (in seconds)
         self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
         self.capacity = {
-            (row['source_node'], row['destination_node']): {slot: 3600.0 for slot in self.time_slots}
-            for _, row in self.routes.iterrows()
+            route_key: {slot: 3600.0 for slot in self.time_slots}
+            for route_key in associations_df['route_key'].unique()
         }
 
-        # Sort jobs by deadline then carbon priority
+        # Precompute job metrics
+        self.job_metrics = self._precompute_job_metrics()
+        self.job_deadlines = {job['id']: job.get('deadline') for job in jobs}
+
+        # Sort jobs by deadline (earliest first)
         self.jobs = sorted(
             jobs,
-            key=lambda x: (x.get('deadline', float('inf')),
-                           self._get_job_emissions(x['id'])),
-            reverse=self.reverse_sort
+            key=lambda x: int(x['deadline']) if x.get('deadline') is not None else float('inf')
         )
 
-    def _get_job_emissions(self, job_id: int) -> float:
-        """Get best-case/worst-case emissions for a job across all routes"""
-        job_emissions = self.df[self.df['job_id'] == job_id]['carbon_emissions']
-        return job_emissions.max() if self.reverse_sort else job_emissions.min()
+    def _precompute_job_metrics(self):
+        """Precompute metrics for each job-route pair"""
+        metrics = {}
+        for (job_id, route_key), group in self.df.groupby(['job_id', 'route_key']):
+            if job_id not in metrics:
+                metrics[job_id] = {}
+            first_row = group.iloc[0]
+            total_transfer_time = float(first_row['transfer_time_hours']) * 3600  # in seconds
+            metrics[job_id][route_key] = {
+                'source_node': first_row['source_node'],
+                'destination_node': first_row['destination_node'],
+                'carbon_emissions': float(first_row['carbon_emissions']),
+                'throughput': float(first_row['throughput']),
+                'transfer_time': total_transfer_time,
+                'transfer_time_hours': float(first_row['transfer_time_hours'])
+            }
+        return metrics
 
     def plan(self) -> pd.DataFrame:
+        """Generate carbon-aware schedule"""
         schedule = []
         unallocated_jobs = []
 
@@ -45,67 +59,78 @@ class CarbonAwarePlanner:
         return pd.DataFrame(schedule)
 
     def _allocate_job(self, job: Dict, schedule: List) -> bool:
-        job_df = self.df[self.df['job_id'] == job['id']]
-        deadline = job.get('deadline', float('inf'))
-
-        # Get all possible allocations before deadline
-        valid_allocations = job_df[job_df['forecast_id'] <= deadline]
-        if valid_allocations.empty:
+        job_id = job['id']
+        if job_id not in self.job_metrics:
             return False
 
-        # Sort by carbon preference
-        allocations = valid_allocations.sort_values(
-            'carbon_emissions',
-            ascending=not self.reverse_sort
+        deadline = self.job_deadlines[job_id]
+        routes = self.job_metrics[job_id]
+
+        # Sort routes by carbon preference
+        routes_sorted = sorted(
+            routes.items(),
+            key=lambda x: x[1]['carbon_emissions'],
+            reverse=self.reverse_sort
         )
 
-        # Try to allocate in the greenest possible slots
-        remaining_time = None
-        allocated_slots = []
+        for route_key, metrics in routes_sorted:
+            remaining_time = metrics['transfer_time']
+            allocated_slots = []
 
-        for _, slot in allocations.iterrows():
-            route = (slot['source_node'], slot['destination_node'])
-            slot_id = slot['forecast_id']
-            transfer_time = slot['transfer_time_hours'] * 3600  # Convert hours to seconds
-
-            # Initialize remaining_time on first iteration
-            if remaining_time is None:
-                remaining_time = transfer_time
-
-            if self.capacity[route][slot_id] > 0:
-                alloc = min(self.capacity[route][slot_id], remaining_time)
-                self.capacity[route][slot_id] -= alloc
-                allocated_slots.append({
-                    'route': route,
-                    'slot_id': slot_id,
-                    'time_used': alloc,
-                    'slot_data': slot
-                })
-                remaining_time -= alloc
+            # Find all available slots before deadline
+            for slot_id in sorted(self.time_slots):
+                if deadline is not None and slot_id > deadline:
+                    continue
 
                 if remaining_time <= 0:
-                    # Job fully allocated
-                    for alloc in allocated_slots:
-                        self._add_schedule_entry(job, alloc, schedule)
-                    return True
+                    break
 
-        # If we get here, allocation failed - roll back
-        for alloc in allocated_slots:
-            self.capacity[alloc['route']][alloc['slot_id']] += alloc['time_used']
+                available = self.capacity[route_key][slot_id]
+                if available > 0:
+                    alloc = min(available, remaining_time)
+                    self.capacity[route_key][slot_id] -= alloc
+                    allocated_slots.append({
+                        'slot_id': slot_id,
+                        'time_used': alloc,
+                        'metrics': metrics
+                    })
+                    remaining_time -= alloc
+
+            if remaining_time <= 0:
+                # Job fully allocated - add to schedule
+                for alloc in allocated_slots:
+                    self._add_schedule_entry(
+                        job,
+                        route_key,
+                        alloc['slot_id'],
+                        alloc['time_used'],
+                        alloc['metrics'],
+                        schedule
+                    )
+                return True
+            else:
+                # Roll back partial allocation
+                for alloc in allocated_slots:
+                    self.capacity[route_key][alloc['slot_id']] += alloc['time_used']
+
         return False
 
-    def _add_schedule_entry(self, job: Dict, allocation: Dict, schedule: List):
+    def _add_schedule_entry(self, job: Dict, route_key: str, slot_id: int,
+                          time_used: float, metrics: Dict, schedule: List):
         """Add an allocation to the schedule"""
-        source, dest = allocation['route']
+        allocated_fraction = time_used / 3600  # Fraction of slot used
+
         schedule.append({
             'job_id': job['id'],
-            'source_node': source,
-            'destination_node': dest,
-            'forecast_id': allocation['slot_id'],
-            'allocated_time': allocation['time_used'],
-            'carbon_emissions': allocation['slot_data']['carbon_emissions'],
-            'throughput': allocation['slot_data']['throughput'],
-            'transfer_time': allocation['time_used'],  # Actual allocated time in seconds
-            'transfer_time_hours': allocation['time_used'] / 3600,
-            'deadline': job.get('deadline')
+            'route': route_key,
+            'source_node': metrics['source_node'],
+            'destination_node': metrics['destination_node'],
+            'forecast_id': slot_id,
+            'allocated_fraction': allocated_fraction,
+            'allocated_time': time_used,
+            'carbon_emissions': metrics['carbon_emissions'],  # Full emissions for job
+            'throughput': metrics['throughput'],
+            'transfer_time': metrics['transfer_time'],  # Total job time
+            'deadline': self.job_deadlines[job['id']],
+            'extendable': job.get('extendable', False)
         })

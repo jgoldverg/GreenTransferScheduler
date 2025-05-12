@@ -2,47 +2,55 @@ from collections import defaultdict
 from typing import List, Dict
 import click
 import pandas as pd
+import math
 
 
 class ShortestJobFirst:
     def __init__(self, associations_df: pd.DataFrame, job_list: List[Dict]):
         self.df = associations_df
         self.job_list = job_list
-        self.routes = associations_df['route_key'].unique()
+
+        # Get unique time slots from forecast_id
         self.time_slots = sorted([int(x) for x in associations_df['forecast_id'].unique()])
+
+        # Capacity in seconds (3600 per slot) per route
         self.capacity = {
-            route: {slot: 3600.0 for slot in self.time_slots}
-            for route in self.routes
+            row['route_key']: {slot: 3600.0 for slot in self.time_slots}
+            for _, row in associations_df.drop_duplicates(['route_key']).iterrows()
         }
 
-        # Precompute transfer times and other metrics
+        # Precompute job metrics
         self.job_metrics = self._precompute_job_metrics()
-
+        self.job_deadlines = {job['id']: job.get('deadline') for job in job_list}
 
     def _precompute_job_metrics(self):
-        """Precompute metrics for each job-node pair"""
+        """Precompute metrics for each job-route pair"""
         metrics = defaultdict(dict)
         for (job_id, route_key), group in self.df.groupby(['job_id', 'route_key']):
             first_row = group.iloc[0]
+            total_transfer_time = float(first_row['transfer_time_hours']) * 3600  # in seconds
             metrics[job_id][route_key] = {
-                'transfer_time': float(first_row['transfer_time']),
-                'carbon_emissions': float(first_row.get('carbon_emissions')),
-                'throughput': float(first_row.get('throughput'))
+                'source_node': first_row['source_node'],
+                'destination_node': first_row['destination_node'],
+                'carbon_emissions': float(first_row['carbon_emissions']),
+                'throughput': float(first_row['throughput']),
+                'transfer_time': total_transfer_time,
+                'transfer_time_hours': float(first_row['transfer_time_hours'])
             }
         return metrics
 
     def _get_job_metrics(self, job_id, route_key):
-        """Get precomputed metrics for a job-node pair"""
+        """Get metrics for a specific job-route pair"""
         return self.job_metrics.get(job_id, {}).get(route_key)
 
     def _find_available_slots(self, job_id, route_key, deadline):
-        """Find available slots for a job considering deadline"""
+        """Find consecutive slots that can accommodate the job before deadline"""
         metrics = self._get_job_metrics(job_id, route_key)
         if not metrics or metrics['transfer_time'] <= 0:
-            return []  # Job can't run on this node
+            return []
 
-        transfer_time = metrics['transfer_time']
-        slots_needed = max(1, (int(transfer_time) + 3599) // 3600)  # Ensure at least 1 slot
+        total_transfer_time = metrics['transfer_time']
+        slots_needed = math.ceil(total_transfer_time / 3600)  # Round up to full slots
 
         # Handle deadline
         try:
@@ -53,41 +61,51 @@ class ShortestJobFirst:
         max_slot = max(self.time_slots)
         deadline_slot = min(deadline, max_slot) if deadline is not None else max_slot
 
-        # Try to find consecutive slots
-        for start_slot in range(len(self.time_slots) - slots_needed + 1):
-            end_slot = start_slot + slots_needed - 1
-            if self.time_slots[end_slot] > deadline_slot:
-                continue
+        # Find earliest possible slots that meet deadline
+        for start_slot_idx in range(len(self.time_slots) - slots_needed + 1):
+            end_slot_idx = start_slot_idx + slots_needed - 1
+            if self.time_slots[end_slot_idx] > deadline_slot:
+                continue  # Doesn't meet deadline
 
-            # Check if all needed slots have enough capacity
-            can_allocate = True
-            time_per_slot = transfer_time / slots_needed
-            for slot in range(start_slot, end_slot + 1):
-                if self.capacity[route_key][self.time_slots[slot]] < time_per_slot:
-                    can_allocate = False
-                    break
+            # Check capacity in all required slots
+            time_per_slot = total_transfer_time / slots_needed
+            can_allocate = all(
+                self.capacity[route_key][self.time_slots[slot_idx]] >= time_per_slot
+                for slot_idx in range(start_slot_idx, end_slot_idx + 1)
+            )
 
             if can_allocate:
-                return list(range(start_slot, end_slot + 1))
+                return list(range(start_slot_idx, end_slot_idx + 1))
 
         return []
 
-    def _add_entry(self, job: Dict, route_key: str, slot_time: int, metrics: Dict, alloc: float, schedule: List):
-        """Helper method to add an entry to the schedule"""
-        self.capacity[route_key][slot_time] -= alloc
-        schedule.append({
-            'job_id': job['id'],
-            'node': route_key,
-            'forecast_id': slot_time,
-            'allocated_time': alloc,
-            'carbon_emissions': metrics['carbon_emissions'],
-            'throughput': metrics['throughput'],
-            'transfer_time': alloc,  # Divided transfer_time across slots
-            'deadline': job.get('deadline'),
-        })
+    def _add_schedule_entry(self, job, route_key, slot_indices, metrics, schedule):
+        """Add an entry to the schedule and update capacities"""
+        total_transfer_time = metrics['transfer_time']
+        time_per_slot = total_transfer_time / len(slot_indices)
+        allocated_fraction = time_per_slot / 3600  # Fraction of slot hour used
+
+        for slot_idx in slot_indices:
+            slot_time = self.time_slots[slot_idx]
+            self.capacity[route_key][slot_time] -= time_per_slot
+
+            schedule.append({
+                'job_id': job['id'],
+                'route': route_key,
+                'source_node': metrics['source_node'],
+                'destination_node': metrics['destination_node'],
+                'forecast_id': slot_time,
+                'allocated_fraction': allocated_fraction,
+                'allocated_time': time_per_slot,
+                'carbon_emissions': metrics['carbon_emissions'],  # Full emissions for job
+                'throughput': metrics['throughput'],
+                'transfer_time': metrics['transfer_time'],  # Total job time
+                'deadline': self.job_deadlines[job['id']],
+                'extendable': job.get('extendable', False)
+            })
 
     def plan(self):
-        """Generate true SJF schedule (shortest transfer time first) with deadline as tiebreaker"""
+        """Generate SJF schedule (shortest transfer time first) with deadline as tiebreaker"""
         schedule = []
 
         # Sort jobs by: 1) shortest transfer time, 2) earliest deadline
@@ -102,32 +120,24 @@ class ShortestJobFirst:
             )
         )
 
-        for idx, job in enumerate(jobs_sorted):
+        for job in jobs_sorted:
             job_id = job['id']
             deadline = job.get('deadline')
             scheduled = False
 
-            # Get all possible nodes for this job, sorted by transfer time (fastest first)
-            node_options = sorted(
-                [route_key for route_key in self.routes if self._get_job_metrics(job_id, route_key)],
-                key=lambda route_key: self._get_job_metrics(job_id, route_key)['transfer_time']
+            # Get all possible routes for this job, sorted by transfer time (fastest first)
+            route_options = sorted(
+                self.job_metrics.get(job_id, {}).keys(),
+                key=lambda r: self.job_metrics[job_id][r]['transfer_time']
             )
 
-            for node in node_options:
-                slot_indices = self._find_available_slots(job_id, node, deadline)
-                if not slot_indices:
-                    continue
-
-                metrics = self._get_job_metrics(job_id, node)
-                transfer_time = metrics['transfer_time']
-                time_per_slot = transfer_time / len(slot_indices)
-
-                for slot_idx in slot_indices:
-                    slot_time = self.time_slots[slot_idx]
-                    self._add_entry(job, node, slot_time, metrics, time_per_slot, schedule)
-
-                scheduled = True
-                break
+            for route_key in route_options:
+                slot_indices = self._find_available_slots(job_id, route_key, deadline)
+                if slot_indices:
+                    metrics = self._get_job_metrics(job_id, route_key)
+                    self._add_schedule_entry(job, route_key, slot_indices, metrics, schedule)
+                    scheduled = True
+                    break
 
             if not scheduled:
                 click.secho(f"⚠️ Failed to schedule Job {job_id} (deadline: {deadline})", fg='yellow')

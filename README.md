@@ -33,3 +33,17 @@ git clone https://github.com/yourusername/carbon-aware-scheduling.git
 docker build -t simgrid-container .
 docker run -it --rm -v $(pwd):/workspace simgrid-container
 cd scheduler_cli
+
+```
+
+## How to use?
+First you need to have a forecast dataset, this dataset can represent anytime period you would like but should cover the entire geographic region that you wish to study.
+The default is as follows:
+- `config/geojson/world.geojson` is a geojson file that draws effectively polygons of the entire world. Pretty straightforward as we use this with GeoPandas.
+- `config/jobs_config/*` contains jobs that you wish to simulate via Simgrid and then schedule to run at some point in the future. There is a command in main.py that covers how to generate example job configuration
+- `config/node_configs/` contains configurations of the nodes in the path. You must include a Source node, destination node, each is named as either the key in the traceroute you are supplying ex `chi_to_buff.json` and our nodes_space_3_config.json contains `chi` and `buff` nodes defined.
+- `config/traceroutes/pmeter_tr` this is the directory to put in traceroutes named from source_to_destination.json with each node being supplied via node_configs.
+- `config/simgrid_configs` pretty simple this directory needs to be created and contains configurations generated via your traceroute and node configurations. Mirroring the WAN setup.
+
+### Commands
+`python3 main.py` will output supported commands with information per command. The defaults are sufficient for certain cases and I will document command examples below as I progress.
