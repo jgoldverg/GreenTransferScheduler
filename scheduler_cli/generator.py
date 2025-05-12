@@ -135,7 +135,6 @@ class DataGenerator:
         total_items = len(route_keys) * len(self.job_list) * len(forecast_idx)
         data_list = []
         processed_count = 0
-        lock = threading.Lock()
 
         # Pre-calculate all combinations to avoid repeated calculations
         all_combinations = [
@@ -153,8 +152,7 @@ class DataGenerator:
                 energy_json = self.simulator.parse_simulation_output(route_key, job['id'])
 
                 if not energy_json:
-                    with lock:
-                        click.secho(f"No data: {route_key[:15]}... job {job['id']}", fg='yellow')
+                    click.secho(f"No data: {route_key[:15]}... job {job['id']}", fg='yellow')
                     return None
 
                 # Calculate all metrics in one pass
@@ -189,8 +187,7 @@ class DataGenerator:
                     'destination_nic_speed': self.node_map[dest_node]['NIC_SPEED'],
                 }
             except Exception as e:
-                with lock:
-                    click.secho(f"Error: {route_key[:15]}... job {job['id']}: {str(e)[:50]}", fg='red')
+                click.secho(f"Error: {route_key[:15]}... job {job['id']}: {str(e)[:50]}", fg='red')
                 return None
 
         # Enhanced progress bar with item count
@@ -213,7 +210,6 @@ class DataGenerator:
                     result = future.result()
                     if result:
                         data_list.append(result)
-                    with lock:
                         processed_count += 1
                         if processed_count % 100 == 0:  # Update more frequently
                             bar.update(100)
