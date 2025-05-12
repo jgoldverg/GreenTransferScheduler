@@ -91,6 +91,6 @@ def planner_factory(algo: PlanAlgorithm, *args, **kwargs):
         PlanAlgorithm.ROUND_ROBIN: RoundRobin,
         PlanAlgorithm.SHORTEST_JOB_FIRST: ShortestJobFirst,
         PlanAlgorithm.EARLIEST_DEADLINE_FIRST: EarliestDeadlineFirst,
-        PlanAlgorithm.GNN_CARBON_MIND: GnnPlanner
+        # PlanAlgorithm.GNN_CARBON_MIND: GnnPlanner
     }
     return planners[PlanAlgorithm(algo)](*args, **kwargs)  # Instantiate the selected planner

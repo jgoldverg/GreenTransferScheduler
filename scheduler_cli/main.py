@@ -62,7 +62,7 @@ def gen(forecast_start, forecast_length, trace, jobs, nodes, df, geojson_path, h
                                    forecast_service=forecast_service, forecast_len=forecast_length)
     scheduler_algo.prepare_fields()
     scheduler_algo.load_in_forecasts()
-    # scheduler_algo.generate_energy_data()
+    scheduler_algo.generate_energy_data()
     scheduler_algo.create_intervals_historical(df)
 
 

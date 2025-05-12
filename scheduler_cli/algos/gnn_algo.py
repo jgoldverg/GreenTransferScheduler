@@ -7,6 +7,7 @@ from torch_geometric.data import Data
 import pandas as pd
 
 
+
 class GnnPlanner:
     def __init__(self, associations_df, job_list):
         self.associations_df = associations_df
@@ -40,60 +41,38 @@ class GnnPlanner:
         print(f"Total Allocated Bytes: {schedule['allocated_bytes'].sum():.2f}")
 
     def prepare_gnn_data(self):
-        """Convert dataframe to graph for GNN processing"""
-        # Create nodes
-        job_nodes = []
-        job_map = {}
-        for i, job_id in enumerate(self.associations_df['job_id'].unique()):
-            job_nodes.append([
-                self.job_deadlines[job_id],  # deadline
-                self.job_sizes[job_id],  # size in bytes
-                0  # current progress
-            ])
-            job_map[job_id] = i
+        # Job nodes: [deadline, size_remaining, is_completed]
+        job_nodes = torch.tensor([
+            [self.job_deadlines[job_id], self.job_sizes[job_id], 0.0]
+            for job_id in self.job_map.keys()
+        ], dtype=torch.float)
 
-        route_nodes = []
-        route_map = {}
-        for i, (route, forecast) in enumerate(
-                self.associations_df[['route_key', 'forecast_id']].drop_duplicates().itertuples(index=False)):
-            route_data = self.associations_df[
-                (self.associations_df['route_key'] == route) &
-                (self.associations_df['forecast_id'] == forecast)
-                ].iloc[0]
-            route_nodes.append([
-                route_data['throughput'],  # throughput in bps
-                forecast,  # time slot
-                route_data['carbon_emissions']  # carbon intensity
-            ])
-            route_map[(route, forecast)] = i + len(job_map)
+        # Route-time nodes: [forecast_id, throughput] (carbon is NOT here!)
+        route_time_nodes = []
+        route_time_map = {}  # (route_key, forecast_id) -> node_id
+        for (route, time), throughput in self.throughput.items():
+            route_time_nodes.append([time, throughput])
+            route_time_map[(route, time)] = len(job_nodes) + len(route_time_nodes) - 1
 
-        # Create edge
-        edges = []
-        edge_attrs = []
-        for _, row in self.associations_df.iterrows():
-            src = job_map[row['job_id']]
-            dst = route_map.get((row['route_key'], row['forecast_id']), -1)
-            if dst >= 0:
-                edges.append((src, dst))
-                edge_attrs.append([
-                    row['carbon_emissions'],  # Just the intensity (gCO2/kWh), not total emissions
-                    row['forecast_id'],
-                    row['throughput'],
-                    self.job_sizes[row['job_id']]
-                ])
+        # Edges: Connect jobs to route-time slots (if time ≤ deadline)
+        edge_index = []
+        edge_attr = []
+        for job_id, job_idx in self.job_map.items():
+            deadline = self.job_deadlines[job_id]
+            for (route, time), throughput in self.throughput.items():
+                if time <= deadline:
+                    rt_node = route_time_map.get((route, time))
+                    if rt_node is not None:
+                        # Get carbon on-demand (from SimGrid or cached)
+                        carbon = self.get_carbon(job_id, route, time)  # Implement this!
+                        edge_index.append((job_idx, rt_node))
+                        edge_attr.append([carbon, throughput])
 
-        # Convert to tensors
-        x = torch.tensor(job_nodes + route_nodes, dtype=torch.float)
-        edge_index = torch.tensor(edges, dtype=torch.long).t().contiguous()
-        edge_attr = torch.tensor(edge_attrs, dtype=torch.float)
+        x = torch.cat([job_nodes, torch.tensor(route_time_nodes, dtype=torch.float)])
+        edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+        edge_attr = torch.tensor(edge_attr, dtype=torch.float)
 
-        # Create masks
-        job_mask = torch.zeros(x.size(0), dtype=torch.bool)
-        job_mask[:len(job_nodes)] = True
-        route_mask = ~job_mask
-
-        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr,
-                    job_mask=job_mask, route_mask=route_mask), job_map, route_map
+        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
     def gnn_optimize(self):
         """End-to-end GNN optimization pipeline with fractional allocations"""
@@ -201,6 +180,9 @@ class GnnPlanner:
             deadline_loss += late_allocations.sum()
 
         return deadline_loss / len(self.job_map)
+
+    def get_carbon(self, job_id, route, time):
+        pass
 
 
 class ScheduleGNN(nn.Module):
