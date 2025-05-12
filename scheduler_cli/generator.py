@@ -12,6 +12,20 @@ from models import get_unique_ips, IpToLonAndLat, process_pmeter_tr
 from simgrid_simulator import SimGridSimulator
 from zone_discovery import HistoricalForecastService
 
+def _run_simulation_task(args, simulator):
+    """Standalone function that can be pickled for multiprocessing"""
+    route_key, job_size, job_id = args
+    try:
+        simulator.run_simulation(
+            node_name=route_key,
+            flows=1,
+            job_size=job_size,
+            job_id=job_id
+        )
+        return True
+    except Exception as e:
+        click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
+        return False
 
 class DataGenerator:
 
@@ -59,9 +73,6 @@ class DataGenerator:
         self.forecasts_df.drop_duplicates(inplace=True)
         self.forecasts_df.to_csv('/workspace/data/forecast_data.csv')
 
-    import concurrent.futures
-    from functools import partial
-
     def generate_energy_data(self, mode='time', max_workers=20):
         # Create tasks for all source-destination routes and jobs
         tasks = []
@@ -87,21 +98,6 @@ class DataGenerator:
             click.secho("No valid routes found for energy simulation!", fg='red', bold=True)
             return False
 
-        # Worker function (processes one task)
-        def run_simulation_task(args, simulator):
-            route_key, job_size, job_id = args
-            try:
-                simulator.run_simulation(
-                    node_name=route_key,
-                    flows=1,
-                    job_size=job_size,
-                    job_id=job_id
-                )
-                return True
-            except Exception as e:
-                click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
-                return False
-
         # Parallel execution
         with click.progressbar(
                 length=len(tasks),
@@ -113,11 +109,10 @@ class DataGenerator:
                 empty_char=' '
         ) as bar:
             with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-                # Bind simulator instance to the worker function
-                worker = partial(run_simulation_task, simulator=self.simulator)
-
-                # Submit all tasks and update progress bar as they complete
+                # Use the standalone function instead of local one
+                worker = partial(_run_simulation_task, simulator=self.simulator)
                 futures = [executor.submit(worker, task) for task in tasks]
+
                 for future in concurrent.futures.as_completed(futures):
                     bar.update(1)
                     future.result()  # Raise exceptions if any
