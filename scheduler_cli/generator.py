@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import math
+import multiprocessing
 from functools import partial
 from typing import Dict, List
 
@@ -61,7 +62,7 @@ class DataGenerator:
     import concurrent.futures
     from functools import partial
 
-    def generate_energy_data(self, mode='time', max_workers=None):
+    def generate_energy_data(self, mode='time', max_workers=20):
         # Create tasks for all source-destination routes and jobs
         tasks = []
         for route_key in self.simulator.traceroute_data.keys():
