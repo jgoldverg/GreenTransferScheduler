@@ -68,7 +68,9 @@ class SimGridSimulator:
             # Initialize route-specific mappings
             routers = {}
             links = {}
-            output_path = f'../config/simgrid_configs/{route_key}_network.xml'
+            output_path = f'/workspace/config/simgrid_configs/{route_key}_network.xml'
+            parent_dir = os.path.dirname(output_path)
+            os.makedirs(parent_dir, exist_ok=True)
             self.node_network_xml_paths.append(f'{route_key}_network.xml')
 
             platform = ET.Element("platform", version="4.1")
