@@ -27,6 +27,8 @@ class OutputFormatter:
 
     def save_to_csv(self, schedule_df, filename):
         filepath = os.path.join(self.output_dir, filename)
+        parent_dir = os.path.dirname(filepath)
+        os.makedirs(parent_dir,exist_ok=True)
         schedule_df.to_csv(filepath, index=False)
         self.console.print(f"\n[bold green]Schedule saved to: [underline]{filepath}[/underline][/bold green]")
         return filepath

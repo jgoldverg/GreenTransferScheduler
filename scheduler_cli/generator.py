@@ -2,6 +2,7 @@ import concurrent.futures
 import json
 import math
 import multiprocessing
+import os.path
 from functools import partial
 from typing import Dict, List
 
@@ -27,6 +28,7 @@ def _run_simulation_task(args, simulator):
     except Exception as e:
         click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
         return False
+
 
 class DataGenerator:
 
@@ -72,6 +74,7 @@ class DataGenerator:
             local_df = self.forecast_service.ips_to_forecasts(traceroute)
             self.forecasts_df = pd.concat([self.forecasts_df, local_df], ignore_index=True)
         self.forecasts_df.drop_duplicates(inplace=True)
+        os.makedirs('/workspace/data', exist_ok=True)
         self.forecasts_df.to_csv('/workspace/data/forecast_data.csv')
 
     def generate_energy_data(self, mode='time', max_workers=20):
@@ -221,6 +224,8 @@ class DataGenerator:
         associations_df['transfer_time_hours'] = associations_df['transfer_time'] / 3600
 
         # Save to CSV
+        parent_dir = os.path.dirname(df_path)
+        os.makedirs(parent_dir, exist_ok=True)
         associations_df.to_csv(df_path, index=False)
         click.secho(f"\n Intervals created successfully at {df_path}", fg="green", bold=True)
         self.associations_df = associations_df

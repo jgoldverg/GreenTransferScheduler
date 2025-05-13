@@ -113,54 +113,97 @@ def generate_job_config(num_of_jobs, job_output_path, deadline_end):
     click.echo(f"Saved to: {output_file}")
 
 
-def generate_realistic_jobs(num_of_jobs, deadline_end=25):
-    """Generate more realistic HPC file transfer jobs with clustered distributions"""
+def generate_realistic_jobs(num_of_jobs, deadline_end=72):
+    """Generate realistic HPC file transfer jobs with size-based urgency"""
+
     job_types = {
-        'small_urgent': {'size_range': (1024 ** 1, 100 * 1024 ** 2),  # 1B-100MB
-                         'deadline_range': (1, 6),
-                         'count_range': (1, 100),
-                         'weight': 0.4},
-        'medium_standard': {'size_range': (100 * 1024 ** 2, 10 * 1024 ** 3),  # 100MB-10GB
-                            'deadline_range': (6, 18),
-                            'count_range': (100, 1000),
-                            'weight': 0.35},
-        # 'large_relaxed': {'size_range': (10 * 1024 ** 3, 500 * 1024 ** 3),  # 10GB-100GB
-        #                   'deadline_range': (12, 25),
-        #                   'count_range': (1000, 5000),
-        #                   'weight': 0.2},
-        # 'huge_flexible': {'size_range': (100 * 1024 ** 3, 10 * 1024 ** 4),  # 100GB-1TB
-        #                   'deadline_range': (18, 25),
-        #                   'count_range': (5000, 10000),
-        #                   'weight': 0.05}
+        'small': {
+            'size_range': (10 * 1024 ** 2, 100 * 1024 ** 2),  # 10MB - 100MB
+            'count_range': (10, 300),
+            'urgency_profiles': {
+                'urgent': (1, min(6, deadline_end)),
+                'standard': (6, min(18, deadline_end)),
+                'relaxed': (18, deadline_end)
+            },
+            'weight': 0.25
+        },
+        'medium': {
+            'size_range': (100 * 1024 ** 2, 1 * 1024 ** 3),  # 100MB - 1GB
+            'count_range': (50, 500),
+            'urgency_profiles': {
+                'urgent': (2, min(12, deadline_end)),
+                'standard': (12, min(36, deadline_end)),
+                'relaxed': (36, deadline_end)
+            },
+            'weight': 0.35
+        },
+        'large': {
+            'size_range': (1 * 1024 ** 3, 10 * 1024 ** 3),  # 1GB - 10GB
+            'count_range': (50, 300),
+            'urgency_profiles': {
+                'urgent': (6, min(24, deadline_end)),
+                'standard': (24, min(48, deadline_end)),
+                'relaxed': (48, deadline_end)
+            },
+            'weight': 0.2
+         },
+        'huge': {
+            'size_range': (10 * 1024 ** 3, 100 * 1024 ** 3),  # 10GB - 100GB
+            'count_range': (20, 150),
+            'urgency_profiles': {
+                'urgent': (12, min(36, deadline_end)),
+                'standard': (36, min(60, deadline_end)),
+                'relaxed': (60, deadline_end)
+            },
+            'weight': 0.15
+        },
+        # 'massive': {
+        #     'size_range': (100 * 1024 ** 3, 1 * 1024 ** 4),  # 100GB - 1TB
+        #     'count_range': (5, 50),
+        #     'urgency_profiles': {
+        #         'urgent': (18, min(48, deadline_end)),
+        #         'standard': (48, min(60, deadline_end)),
+        #         'relaxed': (60, deadline_end)
+        #     },
+        #     'weight': 0.05
+        # }
     }
 
     jobs = []
     total_data = 0
     for job_id in range(1, num_of_jobs + 1):
-        # Weighted random selection of job type
-        job_type = random.choices(
+        job_category = random.choices(
             list(job_types.keys()),
-            weights=[t['weight'] for t in job_types.values()]
+            weights=[v['weight'] for v in job_types.values()]
         )[0]
 
-        params = job_types[job_type]
+        params = job_types[job_category]
 
-        # Generate log-distributed size within range
+        # Pick urgency level randomly (but weighted if you like)
+        urgency_level = random.choices(
+            ['urgent', 'standard', 'relaxed'],
+            weights=[0.4, 0.4, 0.2]
+        )[0]
+
+        deadline_range = params['urgency_profiles'][urgency_level]
+        if deadline_range[0] >= deadline_range[1]:
+            deadline = deadline_range[0]
+        else:
+            deadline = random.randint(*deadline_range)
+
+        # Log-distributed size
         size = 10 ** random.uniform(
             math.log10(params['size_range'][0]),
-            math.log10(params['size_range'][1]))
+            math.log10(params['size_range'][1])
+        )
         total_data += size
-        # Generate deadline within range with some randomness
-        deadline = random.randint(*params['deadline_range'])
-        if random.random() < 0.2:  # 20% chance to be more urgent
-            deadline = max(1, deadline - random.randint(1, 3))
 
         jobs.append({
+            "id": job_id,
             "bytes": int(size),
             "files_count": random.randint(*params['count_range']),
-            "id": job_id,
             "deadline": deadline,
-            "type": job_type  # For visualization grouping
+            "type": f"{job_category}_{urgency_level}"
         })
 
     return jobs, total_data

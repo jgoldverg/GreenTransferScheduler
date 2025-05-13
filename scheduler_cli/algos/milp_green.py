@@ -104,13 +104,18 @@ class LexicographicGreenPlanner:
         return pd.DataFrame(schedule)
 
 
-
 class MilpGreenPlanner:
     def __init__(self, associations_df, job_list):
-        self.associations_df = associations_df
-        self.route_list = associations_df['route_key'].unique()
+        # Keep original for later column access
+        self.associations_df_raw = associations_df.copy()
+
+        # Use MultiIndex for efficient access
+        self.associations_df = associations_df.set_index(['job_id', 'forecast_id', 'route_key'])
+        print(self.associations_df.columns)
+
+        self.route_list = self.associations_df_raw['route_key'].unique()
         self.job_list = job_list
-        self.time_slots = sorted(associations_df['forecast_id'].unique())
+        self.time_slots = sorted(self.associations_df_raw['forecast_id'].unique())
         self.max_slot = max(self.time_slots)
 
         # Store job deadlines and sizes
@@ -128,6 +133,7 @@ class MilpGreenPlanner:
         self.throughput = {}
         self.transfer_time = {}
 
+        print('processing valid combinations...')
         for j in job_list:
             job_id = j['id']
             deadline = self.job_info[job_id]['deadline']
@@ -137,20 +143,14 @@ class MilpGreenPlanner:
                     continue
 
                 for r in self.route_list:
-                    df_filter = associations_df[
-                        (associations_df['job_id'] == job_id) &
-                        (associations_df['forecast_id'] == t) &
-                        (associations_df['route_key'] == r)
-                        ]
+                    key = (job_id, t, r)
+                    data = self.associations_df.loc[key]
+                    self.valid_combinations.append(key)
+                    self.carbon[key] = float(data['carbon_emissions'])
+                    self.throughput[key] = float(data['throughput']) / 8  # bytes/sec
+                    self.transfer_time[key] = float(data['transfer_time'])
 
-                    if not df_filter.empty:
-                        data = df_filter.iloc[0]
-                        key = (job_id, t, r)
-                        self.valid_combinations.append(key)
-                        self.carbon[key] = float(data['carbon_emissions'])
-                        self.throughput[key] = float(data['throughput']) / 8  # Convert to bytes/sec
-                        self.transfer_time[key] = float(data['transfer_time'])
-
+        print('finished processing valid combinations')
         # Initialize problem
         self.problem = pulp.LpProblem("MinCarbon_MaxJobs", pulp.LpMinimize)
 
@@ -216,16 +216,12 @@ class MilpGreenPlanner:
             j, t, r = key
             x_val = pulp.value(self.x[key])
             if x_val > 1e-6:  # Only include non-zero allocations
-                data = self.associations_df[
-                    (self.associations_df['job_id'] == j) &
-                    (self.associations_df['forecast_id'] == t) &
-                    (self.associations_df['route_key'] == r)
-                    ].iloc[0]
+                data = self.associations_df.loc[(j, t, r)]
 
                 schedule.append({
                     'job_id': j,
                     'forecast_id': t,
-                    'route_key': r,
+                    'route': r,
                     'source_node': data['source_node'],
                     'destination_node': data['destination_node'],
                     'allocated_fraction': x_val,
