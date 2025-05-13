@@ -1,12 +1,14 @@
 # Use an official Ubuntu as a base image
-FROM ubuntu:24.10
+FROM ubuntu:24.04
 
 # Set environment variables to avoid interactive prompts
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install dependencies for SimGrid and C++ development
 RUN apt-get update -y && apt-get upgrade -y && apt-get install -y \
+    build-essential \
     python3-dev \
+    libc6-dev \
     simgrid \
     libsimgrid-dev \
     python3-simgrid \
