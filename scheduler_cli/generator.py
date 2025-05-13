@@ -1,5 +1,9 @@
+import concurrent.futures
 import json
 import math
+import multiprocessing
+import os.path
+from functools import partial
 from typing import Dict, List
 
 import click
@@ -8,6 +12,22 @@ import pandas as pd
 from models import get_unique_ips, IpToLonAndLat, process_pmeter_tr
 from simgrid_simulator import SimGridSimulator
 from zone_discovery import HistoricalForecastService
+
+
+def _run_simulation_task(args, simulator):
+    """Standalone function that can be pickled for multiprocessing"""
+    route_key, job_size, job_id = args
+    try:
+        simulator.run_simulation(
+            node_name=route_key,
+            flows=1,
+            job_size=job_size,
+            job_id=job_id
+        )
+        return True
+    except Exception as e:
+        click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
+        return False
 
 
 class DataGenerator:
@@ -54,9 +74,10 @@ class DataGenerator:
             local_df = self.forecast_service.ips_to_forecasts(traceroute)
             self.forecasts_df = pd.concat([self.forecasts_df, local_df], ignore_index=True)
         self.forecasts_df.drop_duplicates(inplace=True)
+        os.makedirs('/workspace/data', exist_ok=True)
         self.forecasts_df.to_csv('/workspace/data/forecast_data.csv')
 
-    def generate_energy_data(self, mode='time'):
+    def generate_energy_data(self, mode='time', max_workers=20):
         # Create tasks for all source-destination routes and jobs
         tasks = []
         for route_key in self.simulator.traceroute_data.keys():
@@ -81,6 +102,7 @@ class DataGenerator:
             click.secho("No valid routes found for energy simulation!", fg='red', bold=True)
             return False
 
+        # Parallel execution
         with click.progressbar(
                 length=len(tasks),
                 label="Running energy simulations",
@@ -90,18 +112,15 @@ class DataGenerator:
                 fill_char='=',
                 empty_char=' '
         ) as bar:
-            for route_key, job_size, job_id in tasks:
-                try:
-                    self.simulator.run_simulation(
-                        node_name=route_key,  # Now passing the full route_key (source_destination)
-                        flows=1,
-                        job_size=job_size,
-                        job_id=job_id
-                    )
-                except Exception as e:
-                    click.secho(f"\nFailed to simulate {route_key} job {job_id}: {str(e)}", fg='red')
-                finally:
+            with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+                # Bind simulator instance to the worker function
+                worker = partial(_run_simulation_task, simulator=self.simulator)
+
+                # Submit all tasks and update progress bar as they complete
+                futures = [executor.submit(worker, task) for task in tasks]
+                for future in concurrent.futures.as_completed(futures):
                     bar.update(1)
+                    future.result()  # Raise exceptions if any
 
         return True
 
@@ -205,6 +224,8 @@ class DataGenerator:
         associations_df['transfer_time_hours'] = associations_df['transfer_time'] / 3600
 
         # Save to CSV
+        parent_dir = os.path.dirname(df_path)
+        os.makedirs(parent_dir, exist_ok=True)
         associations_df.to_csv(df_path, index=False)
         click.secho(f"\n Intervals created successfully at {df_path}", fg="green", bold=True)
         self.associations_df = associations_df
